@@ -75,3 +75,7 @@ Fresh compact-popup samples (same 1600×1000 fixture, `sample` started three sec
 These are early samples, not settled idle measurements. Both helpers exited automatically after sampling. Early footprint remains substantial, reinforcing the separate short-lived helper design; it must not be described as a tiny resident GUI. Renderer rankings vary with measurement timing, as the earlier settled measurements demonstrate.
 
 The final compact-popup build resident (PID 29785), with no helper running, measured **14.2M physical footprint**, **14.4M peak**, **50,480 KiB RSS**, and **0.0% CPU**. Its sampled main thread waited for native AppKit events.
+
+## Landing-page footprint check — 2026-10-23
+
+The installed v0.1.0 resident (PID 13293), with no capture editor running, measured **12.8M physical footprint** and **13.0M peak** using `sample 13293 1`. A nearby `ps` reading showed **30,480 KiB RSS**. The landing page rounds the physical footprint to **about 13 MB at idle**, states the M3 Pro measurement context, and notes that editing uses more memory. This is an observed idle value, not a fixed memory limit or an editor footprint claim.

@@ -366,60 +366,45 @@ kbd {
   color:#7b8172;
   margin:13px 0 21px
 }
-.sample-divider {
-  height:1px;
-  background:#cfd2c3;
-  margin-bottom:8px
+.sample-field {
+  margin-top: 13px;
+  font-size: 10px;
+  color: #555f4b;
 }
-.sample-row {
-  height:35px;
-  display:flex;
-  align-items:center;
-  gap:9px;
-  font-size:10px;
-  color:#555f4b
+.sample-field > span { display: block; margin-bottom: 6px; }
+.sample-field > div {
+  padding: 10px 12px;
+  background: #f8f6ef;
+  border: 1px solid #d2d4c8;
+  border-radius: 4px;
+  color: #727b67;
 }
-.sample-check {
-  width:11px;
-  height:11px;
-  display:grid;
-  place-items:center;
-  background:#899879;
-  color:#fff;
-  font-size:8px;
-  border:1px solid #899879;
-  border-radius:3px
-}
-.sample-check.empty {
-  background:none;
-  border-color:#a6ae97
-}
-.sample-tag {
-  margin-left:auto;
-  background:#dbe0cc;
-  border-radius:3px;
-  padding:3px 5px;
-  color:#768464;
-  font-size:7px
-}
-.sample-tag.next {
-  background:#e7dbc5;
-  color:#a68b5f
-}
-.sample-row.last {
-  color:#929987
-}
-.annotation {
-  position:absolute;
-  inset:0;
-  width:100%;
-  height:100%;
-  pointer-events:none;
-  stroke:#c56852;
-  stroke-width:2.2;
-  stroke-linecap:round;
-  stroke-linejoin:round
-}
+.demo-action-row { display: flex; align-items: center; gap: 8px; margin: 24px 0 7px; }
+.marked-target { position: relative; display: inline-flex; flex-shrink: 0; }
+.sample-save { padding: 11px 17px; background: #d4d7c8; color: #a2aa92; border-radius: 4px; font-size: 11px; white-space: nowrap; }
+.target-box { position: absolute; inset: -6px; border: 2px solid #b6523d; border-radius: 4px; transform: rotate(-1deg); pointer-events: none; }
+.issue-callout { display: flex; align-items: center; gap: 4px; color: #a54331; font-size: 10px; white-space: nowrap; }
+.issue-callout svg { width: 51px; height: 30px; stroke-width: 2; flex-shrink: 0; }
+.example-number { font: 9px ui-monospace, monospace; display: inline-grid; place-items: center; width: 23px; height: 23px; border: 1px solid #6a735e; border-radius: 50%; color: var(--accent); flex-shrink: 0; }
+.instruction-label { margin-top: 17px; margin-bottom: 12px; }
+.agent-section { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: 70px; padding-block: 70px 85px; border-top: 1px solid var(--line); }
+.agent-copy .eyebrow { font-size: 9px; margin-bottom: 21px; }
+.agent-copy > p:not(.eyebrow) { font-size: 13px; color: var(--muted); line-height: 1.9; margin: 22px 0 0; max-width: 430px; }
+.agent-copy > p.agent-attachment-note { font-size: 11px; color: #bac5ae; }
+.agent-payload { background: #222720; border: 1px solid #48513f; border-radius: 12px; padding: 25px; }
+.payload-heading { display: flex; align-items: center; gap: 10px; font: 9px ui-monospace, monospace; color: #b6c2aa; letter-spacing: .6px; }
+.payload-shortcut { margin-left: auto; font-size: 12px; color: var(--accent); }
+.payload-image { margin-top: 24px; display: flex; align-items: center; gap: 13px; }
+.payload-image > svg { flex-shrink: 0; width: 29px; height: 29px; color: #b9c9ab; }
+.payload-image > div { min-width: 0; }
+.payload-image strong { display: block; font-size: 12px; font-weight: 400; color: #cdd6c4; margin-bottom: 8px; }
+.payload-image code { display: block; font-size: 9px; border: 0; background: none; color: #8f9c83; padding: 0; overflow-wrap: anywhere; }
+.agent-payload blockquote { margin: 22px 0; padding: 16px 0 16px 16px; border-left: 2px solid var(--accent); font-size: 15px; line-height: 1.8; color: #e0e6d8; }
+.payload-outcome { display: flex; gap: 11px; align-items: flex-start; border-top: 1px solid #414b37; padding-top: 17px; color: #a5b698; }
+.payload-outcome > span { color: var(--accent); font-size: 20px; }
+.payload-outcome p { margin: 0; font-size: 11px; line-height: 1.8; }
+.payload-outcome strong { color: #d0d9c7; font-weight: 400; }
+.payload-caption { font-size: 9px; color: #8f9c83; margin: 19px 0 0; }
 .demo-tools {
   display:flex;
   align-items:center;
@@ -993,9 +978,6 @@ code {
   .sample-title {
     font-size:30px
   }
-  .sample-row {
-    font-size:8px
-  }
   .demo-tools {
     gap:13px
   }
@@ -1074,9 +1056,6 @@ code {
   }
   .sample-title {
     font-size:35px
-  }
-  .sample-row {
-    font-size:10px
   }
   .demo-context>p {
     font-size:12px
@@ -1262,9 +1241,6 @@ code {
   .sample-title {
     font-size:30px
   }
-  .sample-row {
-    font-size:8px
-  }
   .demo-tools {
     gap:12px;
     font-size:8px
@@ -1296,3 +1272,42 @@ code {
     font-size:30px
   }
 }
+
+@media (max-width: 1050px) {
+  .agent-section { gap: 32px; }
+  .issue-callout { font-size: 9px; }
+  .issue-callout svg { width: 32px; }
+  .sample-save { padding-inline: 12px; }
+}
+@media (max-width: 760px) {
+  .agent-section { grid-template-columns: 1fr; padding-block: 48px; gap: 30px; }
+  .agent-copy > p:not(.eyebrow) { max-width: none; }
+  .agent-payload { padding: 22px; }
+  .sample-title { font-size: 31px; }
+  .sample-content { padding: 25px 24px 22px; }
+  .capture-label { font-size: 8px; letter-spacing: .65px; }
+  .sample-save { padding-inline: 14px; }
+  .issue-callout { font-size: 9px; }
+  .issue-callout svg { width: 39px; }
+}
+@media (max-width: 370px) {
+  .sample-title { font-size: 27px; }
+  .sample-content { padding-inline: 20px; }
+  .sample-save { padding-inline: 11px; font-size: 10px; }
+  .issue-callout svg { width: 30px; }
+  .capture-label { font-size: 7px; }
+}
+.footprint {
+  display: flex;
+  align-items: center;
+  gap: 21px;
+  margin-top: 25px;
+  padding-top: 23px;
+  border-top: 1px solid var(--line);
+}
+.footprint > strong { color: var(--green); font-size: 43px; letter-spacing: -2px; font-weight: 400; white-space: nowrap; }
+.footprint small { font-size: 14px; letter-spacing: 0; }
+.footprint > div { font-size: 13px; line-height: 1.6; color: #cdd6c4; }
+.footprint > div > span { display: block; font-size: 10px; color: var(--muted); }
+.local-copy > p.footprint-note { font-size: 9px; line-height: 1.7; margin-top: 11px; max-width: 370px; }
+@media (max-width: 370px) { .footprint { gap: 15px; } .footprint > strong { font-size: 37px; } }
