@@ -47,7 +47,7 @@ Rebuilding `dist/SnapNote.app` does not update `/Applications/SnapNote.app`. An 
 open /Applications/SnapNote.app
 ```
 
-The app starts in the menu bar with no popup. Press **Cmd+B**, select a region, then type or dictate context. **Cmd+C** or **Ctrl+C** copies the image path followed by the message. The green checkmark or **Cmd+B** saves and closes. The red × button or right-click also saves and closes once a screenshot exists. **Escape** saves and closes the popup; Escape during native region selection cancels selection instead.
+The app starts in the menu bar with no popup. Press **Cmd+B**, select a region, then type or dictate context. **Cmd+C** or **Ctrl+C** copies the image path followed by the message. The green checkmark or **Cmd+B** saves and closes. Right-click also saves and closes once a screenshot exists. The red × deletes the unsaved capture and message, then closes. **Escape** saves and closes the popup; Escape during native region selection cancels selection instead.
 
 Default captures: `~/screenshots/snapshot/`. Shared settings: `~/Library/Application Support/SnapNote/config.toml`. Updating the app does not replace either directory.
 

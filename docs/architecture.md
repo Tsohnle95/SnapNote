@@ -5,7 +5,7 @@ The specification's eframe/tray spike compiled and opened a packaged editor, but
 ## Process ownership
 
 - `snapnote`: CLI dispatcher or windowless resident. Its macOS winit event loop owns tray-icon and global-hotkey on the main thread. `ControlFlow::Wait` and event-loop proxies handle events; it has no native editor window, egui context, OpenGL context, Metal device, texture, or decoded screenshot pixels.
-- `snapnote-editor`: on-demand eframe/egui helper. It owns preview decoding, text, storage work, clipboard operations, the window, and its renderer. Closing or completing a save exits the process. Escape in the popup saves; right-click and the red close button also save the completed capture and exit. Escape in native selection cancels. The OS then reclaims the entire address space and graphics resources, rather than relying on allocator trimming in a resident UI process.
+- `snapnote-editor`: on-demand eframe/egui helper. It owns preview decoding, text, storage work, clipboard operations, the window, and its renderer. Closing or completing a save exits the process. Escape in the popup saves; right-click also saves the completed capture and exits. The red × explicitly deletes the uncommitted draft and exits. Escape in native selection cancels. The OS then reclaims the entire address space and graphics resources, rather than relying on allocator trimming in a resident UI process.
 
 Both executables live in one application bundle. The helper has its own bundle identifier so macOS accessibility and application inspection can distinguish it from the windowless resident. The resident links no OpenGL, Metal, or wgpu library. No additional application framework was introduced: eframe already uses winit 0.30.
 

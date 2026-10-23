@@ -101,3 +101,7 @@ Final native retesting became blocked by `Sky Computer Use native pipe startup f
 Latest verification: 27 automated tests passed, three explicit native OS tests ignored; clippy with warnings denied and formatting passed. Installed the new glow bundle at `/Applications/SnapNote.app` and relaunched its resident. Final physical annotation acceptance is pending user feedback.
 
 User-assisted acceptance: the user subsequently confirmed the updated workflow worked, including drawing and annotation undo/redo. The earlier automation connection failure remains a tooling limitation rather than an unresolved user-reported failure.
+
+## Explicit delete action
+
+The red × now explicitly drops the uncommitted draft (PNG, annotation backup, and pending message) and closes, restoring a way to bail after capture. Its accessible name is `Close and delete capture`. Right-click, Escape, Cmd+B, and the green checkmark continue to save and close. The existing draft cleanup regression verifies that dropping an uncommitted capture removes its files while preserving the input source. The delete button is disabled during loading, saving, and clipboard export, so it never races a worker that owns the draft.

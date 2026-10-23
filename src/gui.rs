@@ -335,6 +335,14 @@ impl Popup {
             self.marks.push(mark);
         }
     }
+    fn discard(&mut self, ctx: &egui::Context) {
+        // The draft owns only this unsaved capture; dropping it removes the PNG
+        // and any private annotation backup without publishing metadata.
+        self.draft = None;
+        self.source = None;
+        self.texture = None;
+        self.close(ctx);
+    }
     fn close(&mut self, ctx: &egui::Context) {
         self.quitting = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -804,7 +812,7 @@ impl eframe::App for Popup {
         }
         // TextEdit must consume pending typing/paste before we snapshot the message.
         if discard_message {
-            self.finish(&ctx);
+            self.discard(&ctx);
             return;
         }
         if copy_message {
@@ -871,7 +879,7 @@ fn popup_action(ui: &mut egui::Ui, save: bool) -> egui::Response {
     let label = if save {
         "Save and close"
     } else {
-        "Close and save"
+        "Close and delete capture"
     };
     let response = ui.add(egui::Button::new("").min_size(egui::vec2(26., 24.)));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));

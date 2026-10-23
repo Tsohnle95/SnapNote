@@ -29,7 +29,7 @@ cargo run
 1. Press **Cmd+B** to start the native region selector, then drag and release. Escape cancels selection.
 2. A small preview appears above the release cursor with a focused message bubble beneath it. The actual PNG path is already inserted; type optional context after it.
 3. Press **Cmd+C** or **Ctrl+C** to copy the complete path and message, if wanted. The popup stays open. A green checkmark and “Copied” appear at the bottom right for one second after success.
-4. Press **Cmd+B** again to save and close. **Escape** also saves and closes the popup. The green checkmark and red × beneath the text both save and close. Closing never copies automatically. **Right-click anywhere in the popup** saves the completed capture and closes. Cancelling native region selection leaves no saved capture.
+4. Press **Cmd+B** again to save and close. **Escape** also saves and closes the popup. The green checkmark saves and closes. The red × deletes the unsaved capture and message, then closes. Closing never copies automatically. **Right-click anywhere in the popup** saves the completed capture and closes. Cancelling native region selection leaves no saved capture.
 
 Drag the screenshot preview to move the popup. Its position is clamped to the capture display initially. The PNG is staged before the input appears, so a copied reference points to an existing file. Finalizing writes Markdown and metadata; the helper process exits and releases its renderer and textures. A failed save retains the popup and draft for recovery.
 
@@ -39,7 +39,7 @@ The original PNG is preserved without recompression; only the preview is downsca
 
 The popup's **Cmd+C** and **Ctrl+C** copy exactly the editable message: an absolute PNG path, newline, and any context entered. Both copy shortcuts copy the full path and message even when text is selected. **Cmd+V** and dictation tools that paste through the system clipboard are supported. Local paths are references, not automatic image attachments; a receiving agent must read or attach the image. A remote agent cannot automatically access this Mac's files.
 
-The CLI additionally supports context-only, path-only, agent text, actual image pixels, and save-only modes. Agent formatting avoids duplicating the path when the saved message already starts with it. Closing the popup leaves the clipboard unchanged and preserves the captured image and message.
+The CLI additionally supports context-only, path-only, agent text, actual image pixels, and save-only modes. Agent formatting avoids duplicating the path when the saved message already starts with it. Closing leaves the clipboard unchanged. Right-click, Escape, Cmd+B, and the green checkmark preserve the image and message; the red × deletes the unsaved capture. A previously copied reference to a deleted capture will no longer work.
 
 ## Storage and configuration
 
