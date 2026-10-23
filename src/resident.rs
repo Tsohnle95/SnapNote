@@ -9,6 +9,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{ChildStdin, Command, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
 };
 use tray_icon::{
     TrayIcon, TrayIconBuilder,
@@ -33,6 +34,27 @@ enum Event {
         code: Option<i32>,
         cleanup: Option<PathBuf>,
     },
+}
+#[derive(Default)]
+struct ShortcutLatch(AtomicBool);
+impl ShortcutLatch {
+    fn pressed(&self, state: HotKeyState) -> bool {
+        match state {
+            HotKeyState::Pressed => !self.0.swap(true, Ordering::Relaxed),
+            HotKeyState::Released => {
+                self.0.store(false, Ordering::Relaxed);
+                false
+            }
+        }
+    }
+}
+fn send_editor(pipe: &mut ChildStdin, command: &str) -> Result<()> {
+    match writeln!(pipe, "{command}").and_then(|_| pipe.flush()) {
+        // Exit notification owns cleanup. A closing helper isn't a UI error,
+        // and reporting this by opening Settings would resurrect a dismissed UI.
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        result => result.map_err(Into::into),
+    }
 }
 struct Resident {
     proxy: EventLoopProxy<Event>,
@@ -172,8 +194,9 @@ impl Resident {
         );
         self.manager = Some(GlobalHotKeyManager::new()?);
         let proxy = self.proxy.clone();
+        let latch = ShortcutLatch::default();
         GlobalHotKeyEvent::set_event_handler(Some(move |e: GlobalHotKeyEvent| {
-            if e.state == HotKeyState::Pressed {
+            if latch.pressed(e.state) {
                 let _ = proxy.send_event(Event::Toggle);
             }
         }));
@@ -212,9 +235,7 @@ impl Resident {
     }
     fn editor(&mut self, page: &str, path: Option<PathBuf>, status: Option<String>) -> Result<()> {
         if let Some(pipe) = &mut self.editor {
-            writeln!(pipe, "{page}")?;
-            pipe.flush()?;
-            return Ok(());
+            return send_editor(pipe, page);
         }
         let current = std::env::current_exe()?;
         let bundle_helper = current
@@ -270,9 +291,7 @@ impl Resident {
     }
     fn capture(&mut self) -> Result<()> {
         if let Some(pipe) = &mut self.editor {
-            writeln!(pipe, "capture")?;
-            pipe.flush()?;
-            return Ok(());
+            return send_editor(pipe, "capture");
         }
         if self.capturing {
             return Ok(());
@@ -318,8 +337,7 @@ impl ApplicationHandler<Event> for Resident {
             Event::Toggle => {
                 if self.editor_is_capture {
                     if let Some(pipe) = &mut self.editor {
-                        let result = writeln!(pipe, "finish").and_then(|_| pipe.flush());
-                        result.map_err(Into::into)
+                        send_editor(pipe, "finish")
                     } else {
                         self.capture()
                     }
@@ -419,5 +437,37 @@ impl ApplicationHandler<Event> for Resident {
         if let Err(error) = result {
             self.report(error);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn held_shortcut_cannot_reopen_after_close_until_released() {
+        let latch = ShortcutLatch::default();
+        assert!(latch.pressed(HotKeyState::Pressed));
+        for _ in 0..20 {
+            assert!(!latch.pressed(HotKeyState::Pressed));
+        }
+        assert!(!latch.pressed(HotKeyState::Released));
+        assert!(latch.pressed(HotKeyState::Pressed));
+    }
+
+    #[test]
+    fn command_racing_helper_exit_does_not_request_error_ui() {
+        let mut child = Command::new("/usr/bin/true")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut pipe = child.stdin.take().unwrap();
+        child.wait().unwrap();
+        assert_eq!(
+            writeln!(pipe, "finish").unwrap_err().kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
+        assert!(send_editor(&mut pipe, "finish").is_ok());
+        assert!(send_editor(&mut pipe, "capture").is_ok());
     }
 }

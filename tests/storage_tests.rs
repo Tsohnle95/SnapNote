@@ -136,3 +136,43 @@ fn uncommitted_draft_releases_its_owned_files() {
     assert!(!image.exists());
     assert!(png.exists());
 }
+
+#[test]
+fn annotation_export_undo_and_commit_preserve_image_dimensions_and_context() {
+    use snapnote::annotations::{Mark, Tool};
+    let (_temp, root, png) = common::setup();
+    let mut draft = storage::begin(&root, &png).unwrap();
+    let original = image::open(draft.image_path()).unwrap().to_rgba8();
+    let mark = Mark {
+        tool: Tool::Arrow,
+        points: vec![[0., 0.], [1., 1.]],
+    };
+    draft.render_annotations(&[mark]).unwrap();
+    let annotated = image::open(draft.image_path()).unwrap().to_rgba8();
+    assert_eq!(annotated.dimensions(), original.dimensions());
+    assert_ne!(annotated, original);
+    draft.render_annotations(&[]).unwrap();
+    assert_eq!(
+        image::open(draft.image_path()).unwrap().to_rgba8(),
+        original
+    );
+    for tool in [Tool::Pen, Tool::Rectangle, Tool::Arrow] {
+        draft
+            .render_annotations(&[Mark {
+                tool,
+                points: vec![[0., 0.], [1., 1.]],
+            }])
+            .unwrap();
+        assert_ne!(
+            image::open(draft.image_path()).unwrap().to_rgba8(),
+            original
+        );
+    }
+    let saved = draft.commit("Annotated context").unwrap();
+    drop(draft);
+    assert_eq!(
+        storage::load(&root, &saved.metadata.id).unwrap().text,
+        "Annotated context"
+    );
+    assert_eq!(std::fs::read_dir(saved.directory).unwrap().count(), 3);
+}

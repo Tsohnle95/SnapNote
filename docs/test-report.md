@@ -79,3 +79,25 @@ Success now sets a one-second deadline for a bottom-right green checkmark and gr
 ## Both copy shortcuts
 
 The popup now consumes both native `Event::Copy` (macOS Cmd+C) and Ctrl+C before TextEdit handles selection copying. Both dispatch the same full path-plus-message operation and one-second success feedback. Settings retain standard text-editing shortcuts.
+
+## Save and cancel buttons
+
+Added a compact green stroked checkmark and × beneath the input, aligned right, with accessible button names and hover descriptions. The checkmark calls save-and-close without copying; cancel shares right-click discard-and-close logic. Both disable during loading/finalization. Native packaged GUI verification clicked Save and close, confirmed helper exit and exact CLI retrieval of `Save button verification`, then clicked Cancel without saving on a new draft and confirmed helper exit and complete draft directory removal. Clippy, formatting, editor geometry test, and both renderer release builds passed.
+
+## Installed build and close/reopen regression
+
+The user was running an older `/Applications/SnapNote.app`, while previous button checks exercised `dist/SnapNote.app`. Updated the installed copy and verified its helper displays the accessible Save and close / Cancel without saving controls. Right-click exited it successfully and removed the draft. Only the installed resident remained afterward.
+
+Fixed lifecycle hazards: a terminal closing helper ignores queued events and never shows itself again; a BrokenPipe from IPC racing helper exit is normal cleanup rather than a reason to launch error Settings; a press/release latch prevents held shortcut repeats from starting another capture after dismissal. Regression tests reproduce the broken pipe and repeated press conditions. The suite now passes 25 tests, with three OS tests explicitly ignored; clippy with warnings denied and formatting passed. Long-duration physical capture/close repetition remains a manual check.
+
+## Growing input, red close button, annotations, and preservation
+
+The red × and right-click now save and close after capture, as does Escape; the previous discard behavior is superseded. Cancellation in native selection still leaves no snippet. The input starts at its actual text height, grows to 144 logical pixels, then scrolls. Native GUI inspection verified the short initial field and capped scrolling with twenty lines. A fixed-height action row avoids resize feedback.
+
+The screenshot hover toolbar provides Move, Pen, Arrow, Box, Undo, and Redo. Cmd+Z and Cmd+Shift+Z operate on annotations when the message is not focused; typing retains normal text undo. Native inspection verified the toolbar, arrow preview, and toolbar undo. A fast-drag issue found during rectangle testing was corrected by processing ordered pointer events rather than relying on the final pointer state; a regression covers same-frame press/move/release for all three drawing tools. PNG export/undo tests verify changed pixels, unchanged dimensions, restoration of original pixels, context persistence, and cleanup of the original backup after commit. PNG decoding/encoding occurs on workers only for annotation export; unedited PNGs are copied unchanged.
+
+Final native retesting became blocked by `Sky Computer Use native pipe startup failed`, including after resetting the tool connection. The test popup was closed through its private control pipe. Final rectangle/pen gestures, Cmd+Z/Cmd+Shift+Z, and post-capture right-click preservation require physical acceptance. No complete native annotation acceptance is claimed.
+
+Latest verification: 27 automated tests passed, three explicit native OS tests ignored; clippy with warnings denied and formatting passed. Installed the new glow bundle at `/Applications/SnapNote.app` and relaunched its resident. Final physical annotation acceptance is pending user feedback.
+
+User-assisted acceptance: the user subsequently confirmed the updated workflow worked, including drawing and annotation undo/redo. The earlier automation connection failure remains a tooling limitation rather than an unresolved user-reported failure.

@@ -5,7 +5,7 @@ The specification's eframe/tray spike compiled and opened a packaged editor, but
 ## Process ownership
 
 - `snapnote`: CLI dispatcher or windowless resident. Its macOS winit event loop owns tray-icon and global-hotkey on the main thread. `ControlFlow::Wait` and event-loop proxies handle events; it has no native editor window, egui context, OpenGL context, Metal device, texture, or decoded screenshot pixels.
-- `snapnote-editor`: on-demand eframe/egui helper. It owns preview decoding, text, storage work, clipboard operations, the window, and its renderer. Closing or completing a save exits the process. Escape in the popup saves; right-click discards its uncommitted draft and exits. Escape in native selection cancels. The OS then reclaims the entire address space and graphics resources, rather than relying on allocator trimming in a resident UI process.
+- `snapnote-editor`: on-demand eframe/egui helper. It owns preview decoding, text, storage work, clipboard operations, the window, and its renderer. Closing or completing a save exits the process. Escape in the popup saves; right-click and the red close button also save the completed capture and exit. Escape in native selection cancels. The OS then reclaims the entire address space and graphics resources, rather than relying on allocator trimming in a resident UI process.
 
 Both executables live in one application bundle. The helper has its own bundle identifier so macOS accessibility and application inspection can distinguish it from the windowless resident. The resident links no OpenGL, Metal, or wgpu library. No additional application framework was introduced: eframe already uses winit 0.30.
 
@@ -46,3 +46,5 @@ Primary API references checked during implementation:
 - https://developer.apple.com/documentation/coregraphics/cgrequestscreencaptureaccess()
 
 Native clipboard support is explicitly enabled on eframe. Without that feature, egui-winit silently uses an application-local clipboard and external Cmd+V/Hex dictation cannot insert text. Ctrl+C is handled after TextEdit consumes pending input, so its full-message snapshot includes text pasted in the same frame.
+
+Annotations use normalized vectors and no persistent full-resolution pixel buffer. Copy and finalization workers decode a private original snapshot only when annotation export is needed, rasterize red marks, atomically replace the PNG, and release the pixel buffer. Undo/redo stacks retain vectors; the temporary original snapshot is deleted when the draft exits. The text scroll region caps at 144 logical pixels and the native window follows measured content height; action-row height is fixed to avoid resize feedback.

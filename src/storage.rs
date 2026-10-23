@@ -41,6 +41,7 @@ fn write(path: &Path, bytes: &[u8]) -> Result<()> {
 /// The PNG exists before the popup is shown so copied references are immediately readable.
 pub struct Draft {
     guard: Option<tempfile::TempDir>,
+    original: Option<tempfile::NamedTempFile>,
     directory: PathBuf,
     metadata: Metadata,
 }
@@ -53,6 +54,31 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 impl Draft {
+    pub fn render_annotations(&mut self, marks: &[crate::annotations::Mark]) -> Result<()> {
+        if marks.is_empty() && self.original.is_none() {
+            return Ok(());
+        }
+        if self.original.is_none() {
+            let mut original = tempfile::NamedTempFile::new_in(&self.directory)?;
+            std::io::copy(
+                &mut std::fs::File::open(self.image_path())?,
+                original.as_file_mut(),
+            )?;
+            self.original = Some(original);
+        }
+        let mut pixels = image::ImageReader::open(self.original.as_ref().unwrap().path())?
+            .with_guessed_format()?
+            .decode()?
+            .to_rgba8();
+        crate::annotations::render(&mut pixels, marks);
+        let mut output = tempfile::NamedTempFile::new_in(&self.directory)?;
+        image::DynamicImage::ImageRgba8(pixels)
+            .write_to(output.as_file_mut(), image::ImageFormat::Png)?;
+        output.as_file().sync_all()?;
+        output.persist(self.image_path())?;
+        Ok(())
+    }
+
     pub fn image_path(&self) -> PathBuf {
         self.directory.join("capture.png")
     }
@@ -115,6 +141,7 @@ pub fn begin(root: &Path, png: &Path) -> Result<Draft> {
     file.sync_all()?;
     Ok(Draft {
         guard: Some(guard),
+        original: None,
         directory,
         metadata,
     })

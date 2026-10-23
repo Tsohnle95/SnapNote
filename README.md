@@ -6,6 +6,8 @@ The idle application is a windowless menu-bar process. The editor runs in a sepa
 
 ## Build and launch
 
+See [BUILDING.md](BUILDING.md) for manual rebuild, installation, launch, and permission-recovery commands. Rebuilding `dist` alone does not update the installed Applications copy.
+
 Requires a current stable Rust toolchain, macOS, and Xcode command line tools. The local release bundle is ad-hoc signed; it is not notarized for distribution.
 
 ```sh
@@ -27,7 +29,7 @@ cargo run
 1. Press **Cmd+B** to start the native region selector, then drag and release. Escape cancels selection.
 2. A small preview appears above the release cursor with a focused message bubble beneath it. The actual PNG path is already inserted; type optional context after it.
 3. Press **Cmd+C** or **Ctrl+C** to copy the complete path and message, if wanted. The popup stays open. A green checkmark and “Copied” appear at the bottom right for one second after success.
-4. Press **Cmd+B** again to save and close. **Escape** also saves and closes the popup. Closing never copies automatically. **Right-click anywhere in the popup** discards the current capture and closes without saving.
+4. Press **Cmd+B** again to save and close. **Escape** also saves and closes the popup. The green checkmark and red × beneath the text both save and close. Closing never copies automatically. **Right-click anywhere in the popup** saves the completed capture and closes. Cancelling native region selection leaves no saved capture.
 
 Drag the screenshot preview to move the popup. Its position is clamped to the capture display initially. The PNG is staged before the input appears, so a copied reference points to an existing file. Finalizing writes Markdown and metadata; the helper process exits and releases its renderer and textures. A failed save retains the popup and draft for recovery.
 
@@ -37,7 +39,7 @@ The original PNG is preserved without recompression; only the preview is downsca
 
 The popup's **Cmd+C** and **Ctrl+C** copy exactly the editable message: an absolute PNG path, newline, and any context entered. Both copy shortcuts copy the full path and message even when text is selected. **Cmd+V** and dictation tools that paste through the system clipboard are supported. Local paths are references, not automatic image attachments; a receiving agent must read or attach the image. A remote agent cannot automatically access this Mac's files.
 
-The CLI additionally supports context-only, path-only, agent text, actual image pixels, and save-only modes. Agent formatting avoids duplicating the path when the saved message already starts with it. Saving or discarding the popup leaves the clipboard unchanged. Right-click discards the staged image, so any reference copied from that cancelled capture stops working.
+The CLI additionally supports context-only, path-only, agent text, actual image pixels, and save-only modes. Agent formatting avoids duplicating the path when the saved message already starts with it. Closing the popup leaves the clipboard unchanged and preserves the captured image and message.
 
 ## Storage and configuration
 
@@ -117,3 +119,7 @@ cargo test --locked --test native_clipboard_tests -- --ignored
 ```
 
 The default build uses **glow**. The comparison bundle is `dist/comparison/wgpu/SnapNote.app`. The resident creates no renderer in either build. See [test report](docs/test-report.md), [performance measurements](docs/performance.md), and [architecture](docs/architecture.md) for measured results, pending integration checks, and limitations. Windows and Linux capture adapters are intentionally not implemented.
+
+## Annotations and growing input
+
+The input grows with its content up to 144 logical pixels, then scrolls. Hover over the screenshot for Move, Pen, Arrow, Box, Undo, and Redo. Move drags the popup; the drawing tools add red marks. Cmd+Z and Cmd+Shift+Z undo and redo annotations when the message field is not focused; normal text undo remains available while typing. PNG annotations are applied off the UI thread before copying its reference or saving. Unedited images keep their original PNG bytes.

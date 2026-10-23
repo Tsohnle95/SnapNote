@@ -1,5 +1,6 @@
 use eframe::egui;
 use snapnote::{
+    annotations::{Mark, Tool},
     capture::{self, Capture, CursorAnchor},
     clipboard,
     config::{self, Config},
@@ -32,7 +33,10 @@ enum Event {
         draft: Draft,
         result: anyhow::Result<Snippet>,
     },
-    Copied(anyhow::Result<()>),
+    Copied {
+        draft: Draft,
+        result: anyhow::Result<()>,
+    },
     Finish,
     Recapture,
     Settings,
@@ -72,6 +76,12 @@ struct Popup {
     preview_logged: bool,
     capture_completed_ms: Option<u128>,
     recent: Vec<Snippet>,
+    tool: Tool,
+    marks: Vec<Mark>,
+    redo_marks: Vec<Mark>,
+    message_id: Option<egui::Id>,
+    active_mark: Option<Mark>,
+    popup_height: f32,
 }
 fn post(tx: &Sender<Event>, ctx: &egui::Context, event: Event) {
     let _ = tx.send(event);
@@ -89,7 +99,7 @@ fn popup_geometry(
         .min(220. / image.y.max(1.))
         .min(1.);
     let preview = image * scale;
-    let size = egui::vec2(width, preview.y + 130.);
+    let size = egui::vec2(width, preview.y + 110.);
     let position = anchor.map(|a| {
         let left = a.left as f32;
         let top = a.top as f32;
@@ -201,6 +211,12 @@ pub fn run(
                 preview_logged: false,
                 capture_completed_ms: options.capture_completed_ms,
                 recent: vec![],
+                tool: Tool::Move,
+                marks: vec![],
+                redo_marks: vec![],
+                message_id: None,
+                active_mark: None,
+                popup_height: 0.,
             }))
         }),
     )
@@ -208,11 +224,125 @@ pub fn run(
     Ok(returned_code.load(Ordering::SeqCst))
 }
 impl Popup {
+    fn preview_ui(&mut self, ui: &mut egui::Ui) -> f32 {
+        let Some(texture) = self.texture.clone() else {
+            return 0.;
+        };
+        let response = ui
+            .vertical_centered(|ui| {
+                ui.add(
+                    egui::Image::new(&texture)
+                        .max_size(egui::vec2(ui.available_width() - 4., 220.))
+                        .maintain_aspect_ratio(true)
+                        .corner_radius(8)
+                        .sense(egui::Sense::drag()),
+                )
+            })
+            .inner;
+        let rect = response.rect;
+        let toolbar_rect = egui::Rect::from_min_size(
+            rect.min + egui::vec2(4., 4.),
+            egui::vec2(rect.width() - 8., 26.),
+        );
+        let ctx = ui.ctx().clone();
+        let pointer = ctx.input(|i| i.pointer.interact_pos());
+        let over_toolbar = pointer.is_some_and(|p| toolbar_rect.contains(p));
+        let editable = !self.saving && !self.copying && !self.loading;
+        if editable && (response.hovered() || over_toolbar || self.tool != Tool::Move) {
+            let mut toolbar = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(toolbar_rect)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_unmultiplied(25, 27, 32, 240))
+                .corner_radius(6)
+                .inner_margin(3)
+                .show(&mut toolbar, |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.;
+                    ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
+                    for (tool, label) in [
+                        (Tool::Move, "Move"),
+                        (Tool::Pen, "Pen"),
+                        (Tool::Arrow, "Arrow"),
+                        (Tool::Rectangle, "Box"),
+                    ] {
+                        if ui.selectable_label(self.tool == tool, label).clicked() {
+                            self.tool = tool;
+                        }
+                    }
+                    if ui
+                        .add_enabled(!self.marks.is_empty(), egui::Button::new("Undo"))
+                        .clicked()
+                    {
+                        self.undo_annotation();
+                    }
+                    if ui
+                        .add_enabled(!self.redo_marks.is_empty(), egui::Button::new("Redo"))
+                        .clicked()
+                    {
+                        self.redo_annotation();
+                    }
+                });
+        }
+        if editable
+            && ctx.input(|i| i.pointer.primary_pressed())
+            && pointer.is_some_and(|p| rect.contains(p))
+            && let Some(id) = self.message_id
+        {
+            ctx.memory_mut(|m| m.surrender_focus(id));
+        }
+        if editable
+            && self.tool == Tool::Move
+            && !over_toolbar
+            && response.is_pointer_button_down_on()
+            && ctx.input(|i| i.pointer.primary_pressed())
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if editable && self.tool != Tool::Move {
+            // Process ordered events, including drags that press and release in one frame.
+            for event in ctx.input(|i| i.events.clone()) {
+                if let Some(mark) =
+                    drawing_event(&mut self.active_mark, self.tool, rect, toolbar_rect, &event)
+                {
+                    self.marks.push(mark);
+                    self.redo_marks.clear();
+                }
+            }
+        }
+        let painter = ui.painter().with_clip_rect(rect);
+        for mark in self.marks.iter().chain(self.active_mark.iter()) {
+            for (a, b) in mark.segments() {
+                painter.line_segment(
+                    [
+                        rect.min + egui::vec2(a[0] * rect.width(), a[1] * rect.height()),
+                        rect.min + egui::vec2(b[0] * rect.width(), b[1] * rect.height()),
+                    ],
+                    egui::Stroke::new(2.5, egui::Color32::from_rgb(255, 80, 80)),
+                );
+            }
+        }
+        rect.height()
+    }
+    fn undo_annotation(&mut self) {
+        if let Some(mark) = self.marks.pop() {
+            self.redo_marks.push(mark);
+        }
+    }
+    fn redo_annotation(&mut self) {
+        if let Some(mark) = self.redo_marks.pop() {
+            self.marks.push(mark);
+        }
+    }
     fn close(&mut self, ctx: &egui::Context) {
         self.quitting = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
     fn show(&self, ctx: &egui::Context) {
+        if self.quitting {
+            return;
+        }
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
@@ -256,11 +386,14 @@ impl Popup {
         };
         self.saving = true;
         let message = self.message.clone();
+        let marks = self.marks.clone();
         let tx = self.tx.clone();
         let wake = ctx.clone();
         std::thread::spawn(move || {
             let started = std::time::Instant::now();
-            let result = draft.commit(&message);
+            let result = draft
+                .render_annotations(&marks)
+                .and_then(|_| draft.commit(&message));
             eprintln!(
                 "SnapNote: message finalized in {} ms",
                 started.elapsed().as_millis()
@@ -281,7 +414,14 @@ impl Popup {
         .expect("agent formatting always returns text");
         let tx = self.tx.clone();
         let wake = ctx.clone();
-        std::thread::spawn(move || post(&tx, &wake, Event::Copied(clipboard::copy_text(text))));
+        let mut draft = self.draft.take().unwrap();
+        let marks = self.marks.clone();
+        std::thread::spawn(move || {
+            let result = draft
+                .render_annotations(&marks)
+                .and_then(|_| clipboard::copy_text(text));
+            post(&tx, &wake, Event::Copied { draft, result });
+        });
     }
     fn settings_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("SnapNote Settings");
@@ -329,6 +469,10 @@ impl eframe::App for Popup {
         [0., 0., 0., 0.]
     }
     fn logic(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        // Closing is terminal: queued IPC/worker completions must never show us again.
+        if self.quitting {
+            return;
+        }
         if self
             .copied_until
             .is_some_and(|until| std::time::Instant::now() >= until)
@@ -343,6 +487,9 @@ impl eframe::App for Popup {
             self.finish(ctx);
         }
         while let Ok(event) = self.rx.try_recv() {
+            if self.quitting {
+                break;
+            }
             match event {
                 Event::Finish => self.finish(ctx),
                 Event::Recapture => {
@@ -402,7 +549,8 @@ impl eframe::App for Popup {
                         }
                     }
                 }
-                Event::Copied(result) => {
+                Event::Copied { draft, result } => {
+                    self.draft = Some(draft);
                     self.copying = false;
                     match result {
                         Ok(()) => {
@@ -470,19 +618,34 @@ impl eframe::App for Popup {
         if self.page == Page::Popup
             && !self.loading
             && !self.saving
+            && !self.copying
             && ctx.input(|i| i.pointer.secondary_pressed())
         {
-            // Explicit cancellation: dropping the uncommitted draft removes its PNG.
-            // Do not publish metadata or modify the user's clipboard.
-            self.draft = None;
-            self.source = None;
-            self.texture = None;
-            self.close(&ctx);
+            // Once captured, closing always preserves the image and message.
+            self.finish(&ctx);
             return;
         }
         let mut copy_message = false;
         let mut finish_message = false;
+        let mut discard_message = false;
         if self.page == Page::Popup {
+            let editing_text = self
+                .message_id
+                .is_some_and(|id| ctx.memory(|m| m.has_focus(id)));
+            if !editing_text && !self.saving && !self.copying {
+                let redo = ctx.input_mut(|i| {
+                    i.consume_key(
+                        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                        egui::Key::Z,
+                    )
+                });
+                let undo = ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z));
+                if redo {
+                    self.redo_annotation();
+                } else if undo {
+                    self.undo_annotation();
+                }
+            }
             copy_message = ctx.input_mut(|i| {
                 let control_c = i.consume_key(egui::Modifiers::CTRL, egui::Key::C);
                 // winit converts native Cmd+C to Event::Copy before egui sees it.
@@ -523,58 +686,79 @@ impl eframe::App for Popup {
                             );
                         }
                     }
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.vertical_centered(|ui| {
-                            if let Some(texture) = &self.texture {
-                                let preview = ui.add(
-                                    egui::Image::new(texture)
-                                        .max_size(egui::vec2(ui.available_width() - 4., 220.))
-                                        .maintain_aspect_ratio(true)
-                                        .corner_radius(8)
-                                        .sense(egui::Sense::drag()),
-                                );
-                                let preview = preview.on_hover_cursor(egui::CursorIcon::Grab);
-                                // AppKit requires the original mouse-down event, before
-                                // egui's drag-distance threshold has been crossed.
-                                if preview.is_pointer_button_down_on()
-                                    && ctx.input(|i| i.pointer.primary_pressed())
-                                {
-                                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                                }
-                            }
-                        });
+                    ui.scope(|ui| {
+                        let preview_height = self.preview_ui(ui);
                         ui.add_space(6.);
-                        egui::Frame::new()
+                        let bubble = egui::Frame::new()
                             .fill(egui::Color32::from_rgb(30, 32, 38))
                             .corner_radius(12)
                             .inner_margin(10)
                             .show(ui, |ui| {
-                                ui.add_enabled_ui(!self.loading && !self.saving, |ui| {
-                                    let mut output = egui::TextEdit::multiline(&mut self.message)
-                                        .id_salt("message")
-                                        .frame(egui::Frame::NONE)
-                                        .desired_width(f32::INFINITY)
-                                        .desired_rows(4)
-                                        .cursor_at_end(true)
-                                        .hint_text("Add context…")
-                                        .show(ui);
-                                    if self.focus {
-                                        output.response.request_focus();
-                                        output.state.cursor.set_char_range(Some(
-                                            egui::text::CCursorRange::one(
-                                                egui::text::CCursor::new(
-                                                    self.message.chars().count(),
-                                                ),
-                                            ),
-                                        ));
-                                        output.state.store(ui.ctx(), output.response.id);
-                                        self.focus = false;
-                                    }
-                                });
+                                egui::ScrollArea::vertical()
+                                    .id_salt("message_scroll")
+                                    .max_height(144.)
+                                    .show(ui, |ui| {
+                                        ui.add_enabled_ui(!self.loading && !self.saving, |ui| {
+                                            let mut output =
+                                                egui::TextEdit::multiline(&mut self.message)
+                                                    .id_salt("message")
+                                                    .frame(egui::Frame::NONE)
+                                                    .desired_width(f32::INFINITY)
+                                                    .desired_rows(1)
+                                                    .cursor_at_end(true)
+                                                    .hint_text("Add context…")
+                                                    .show(ui);
+                                            self.message_id = Some(output.response.id);
+                                            if self.focus {
+                                                output.response.request_focus();
+                                                output.state.cursor.set_char_range(Some(
+                                                    egui::text::CCursorRange::one(
+                                                        egui::text::CCursor::new(
+                                                            self.message.chars().count(),
+                                                        ),
+                                                    ),
+                                                ));
+                                                output.state.store(ui.ctx(), output.response.id);
+                                                self.focus = false;
+                                            }
+                                        });
+                                    });
+                                ui.add_space(4.);
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(ui.available_width(), 24.),
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.add_enabled_ui(
+                                            !self.loading && !self.saving && !self.copying,
+                                            |ui| {
+                                                discard_message = popup_action(ui, false).clicked();
+                                                finish_message |= popup_action(ui, true).clicked();
+                                            },
+                                        );
+                                    },
+                                );
                                 if !self.status.is_empty() {
                                     ui.small(&self.status);
                                 }
                             });
+                        let height = preview_height + 6. + bubble.response.rect.height() + 24.;
+                        if (height - self.popup_height).abs() > 1. {
+                            self.popup_height = height;
+                            let width = popup_geometry(self.anchor, self.preview_size).0.x;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                                width, height,
+                            )));
+                            if let (Some(anchor), Some(rect)) =
+                                (self.anchor, ctx.input(|i| i.viewport().outer_rect))
+                            {
+                                let bottom = anchor.top as f32 + anchor.height as f32 - 8.;
+                                if rect.top() + height > bottom {
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
+                                        egui::pos2(rect.left(), bottom - height),
+                                    ));
+                                }
+                            }
+                        }
                     });
                 }
                 Page::Settings => {
@@ -619,6 +803,10 @@ impl eframe::App for Popup {
                 });
         }
         // TextEdit must consume pending typing/paste before we snapshot the message.
+        if discard_message {
+            self.finish(&ctx);
+            return;
+        }
         if copy_message {
             self.copy(&ctx);
         }
@@ -627,9 +815,128 @@ impl eframe::App for Popup {
         }
     }
 }
+fn drawing_event(
+    active: &mut Option<Mark>,
+    tool: Tool,
+    rect: egui::Rect,
+    toolbar: egui::Rect,
+    event: &egui::Event,
+) -> Option<Mark> {
+    match *event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            ..
+        } if rect.contains(pos) && !toolbar.contains(pos) => {
+            *active = Some(Mark {
+                tool,
+                points: vec![normalized_point(rect, pos)],
+            });
+        }
+        egui::Event::PointerMoved(pos) => {
+            if let Some(mark) = active {
+                extend_mark(mark, normalized_point(rect, pos));
+            }
+        }
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            ..
+        } => {
+            if let Some(mut mark) = active.take() {
+                extend_mark(&mut mark, normalized_point(rect, pos));
+                return Some(mark);
+            }
+        }
+        _ => {}
+    }
+    None
+}
+fn normalized_point(rect: egui::Rect, p: egui::Pos2) -> [f32; 2] {
+    [
+        ((p.x - rect.left()) / rect.width()).clamp(0., 1.),
+        ((p.y - rect.top()) / rect.height()).clamp(0., 1.),
+    ]
+}
+fn extend_mark(mark: &mut Mark, point: [f32; 2]) {
+    if mark.tool == Tool::Pen || mark.points.len() == 1 {
+        mark.points.push(point);
+    } else {
+        *mark.points.last_mut().unwrap() = point;
+    }
+}
+fn popup_action(ui: &mut egui::Ui, save: bool) -> egui::Response {
+    let label = if save {
+        "Save and close"
+    } else {
+        "Close and save"
+    };
+    let response = ui.add(egui::Button::new("").min_size(egui::vec2(26., 24.)));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+    let origin = response.rect.center() - egui::vec2(6., 6.);
+    let color = if save {
+        egui::Color32::from_rgb(95, 220, 135)
+    } else {
+        egui::Color32::from_rgb(245, 95, 95)
+    };
+    let stroke = egui::Stroke::new(1.7, color);
+    if save {
+        ui.painter().add(egui::Shape::line(
+            vec![
+                origin + egui::vec2(1., 6.),
+                origin + egui::vec2(5., 10.),
+                origin + egui::vec2(11., 2.),
+            ],
+            stroke,
+        ));
+    } else {
+        ui.painter().line_segment(
+            [origin + egui::vec2(2., 2.), origin + egui::vec2(10., 10.)],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [origin + egui::vec2(10., 2.), origin + egui::vec2(2., 10.)],
+            stroke,
+        );
+    }
+    response.on_hover_text(label)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fast_drag_retains_press_and_release_in_one_frame() {
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300., 200.));
+        let toolbar = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300., 30.));
+        for tool in [Tool::Pen, Tool::Arrow, Tool::Rectangle] {
+            let mut active = None;
+            let mut result = None;
+            for event in [
+                egui::Event::PointerButton {
+                    pos: egui::pos2(60., 60.),
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerMoved(egui::pos2(150., 100.)),
+                egui::Event::PointerButton {
+                    pos: egui::pos2(240., 160.),
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ] {
+                result = drawing_event(&mut active, tool, rect, toolbar, &event).or(result);
+            }
+            let mark = result.unwrap();
+            assert_eq!(mark.points.first(), Some(&[0.2, 0.3]));
+            assert_eq!(mark.points.last(), Some(&[0.8, 0.8]));
+            assert!(active.is_none());
+            assert!(!mark.segments().is_empty());
+        }
+    }
     #[test]
     fn popup_places_preview_above_cursor_and_clamps_to_monitor() {
         let anchor = CursorAnchor {
