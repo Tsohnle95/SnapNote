@@ -111,7 +111,10 @@ fn popup_draft_has_real_image_path_before_copy_and_commits_exact_message() {
     assert!(path.is_file());
     assert!(path.is_absolute());
     assert!(storage::list(&root).unwrap().is_empty());
-    let message = format!("{}\n日本語 — optional message\n", path.display());
+    let message = format!(
+        "{}\nView this screenshot.\n日本語 — optional message\n",
+        path.display()
+    );
     let saved = draft.commit(&message).unwrap();
     drop(draft);
     let loaded = storage::load(&root, &saved.metadata.id).unwrap();
@@ -123,7 +126,7 @@ fn popup_draft_has_real_image_path_before_copy_and_commits_exact_message() {
     );
     assert_eq!(
         snapnote::clipboard::format(snapnote::config::Mode::Context, &path, &message).unwrap(),
-        "日本語 — optional message\n"
+        "View this screenshot.\n日本語 — optional message\n"
     );
 }
 #[test]

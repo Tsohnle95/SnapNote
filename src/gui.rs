@@ -140,13 +140,24 @@ pub fn run(
         _ => Page::Popup,
     };
     let is_popup = page == Page::Popup;
+    let is_settings = page == Page::Settings;
     let code = Arc::new(AtomicI32::new(0));
     let returned_code = code.clone();
     let mut native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_visible(!is_popup)
-            .with_inner_size(if is_popup { [340., 300.] } else { [500., 380.] })
-            .with_min_inner_size([240., 150.])
+            .with_inner_size(if is_popup {
+                [340., 300.]
+            } else if is_settings {
+                [640., 600.]
+            } else {
+                [500., 380.]
+            })
+            .with_min_inner_size(if is_settings {
+                [420., 380.]
+            } else {
+                [240., 150.]
+            })
             .with_decorations(!is_popup)
             .with_transparent(is_popup)
             .with_always_on_top(),
@@ -369,9 +380,16 @@ impl Popup {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
+    fn show_settings(&self, ctx: &egui::Context) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(420., 380.)));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(640., 600.)));
+        self.show(ctx);
+    }
     fn place(&mut self, ctx: &egui::Context) {
         let (size, position) = popup_geometry(self.anchor, self.preview_size);
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(240., 150.)));
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         if let Some(position) = position {
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(position));
@@ -447,44 +465,125 @@ impl Popup {
         });
     }
     fn settings_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("SnapNote Settings");
-        ui.label("Capture / save-and-close shortcut");
-        ui.text_edit_singleline(&mut self.preferences.capture.hotkey);
-        ui.label("Screenshot folder");
-        ui.text_edit_singleline(&mut self.directory);
-        if ui.button("Save Settings").clicked() {
-            self.preferences.storage.directory = PathBuf::from(&self.directory);
-            self.status = match self.preferences.save(&self.config_path) {
-                Ok(()) => {
-                    self.config = self.preferences.clone();
-                    "Saved. The shortcut applies when this popup closes.".into()
-                }
-                Err(error) => format!("Settings not saved: {error:#}"),
-            };
-            if let Some(capture) = self.source.take() {
-                self.prepare(ui.ctx(), capture);
-            }
-        }
-        if self.draft.is_some() && ui.button("Back to capture").clicked() {
-            self.page = Page::Popup;
-            self.place(ui.ctx());
-            self.focus = true;
-        }
+        let ink = egui::Color32::from_rgb(231, 233, 235);
+        let muted = egui::Color32::from_rgb(149, 154, 158);
+        let border = egui::Color32::from_rgb(49, 52, 55);
+        let accent = egui::Color32::from_rgb(190, 207, 175);
+        let style = ui.style_mut();
+        style.spacing.item_spacing = egui::vec2(8., 6.);
+        style.spacing.button_padding = egui::vec2(14., 9.);
+        style.visuals.override_text_color = Some(ink);
+        style.visuals.extreme_bg_color = egui::Color32::from_rgb(18, 20, 22);
+        style.visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(29, 32, 35);
+        style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1., border);
+        style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
+        style.visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(43, 47, 51);
+        style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1., muted);
+        style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
+        style.visuals.selection.bg_fill = egui::Color32::from_rgb(64, 79, 53);
+        style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1., border);
+
+        let content_height = (ui.available_height() - 73.).max(120.);
+        ui.allocate_ui(egui::vec2(ui.available_width(), content_height), |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("settings_scroll")
+                .max_height(content_height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("Settings").size(24.).strong());
+                    ui.label(egui::RichText::new("A few things to make SnapNote yours.").size(12.).color(muted));
+                    ui.add_space(22.);
+                    ui.label(egui::RichText::new("CAPTURE").size(10.).color(muted));
+                    ui.add_space(4.);
+                    settings_card(border).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        if ui.available_width() >= 480. {
+                            ui.horizontal(|ui| {
+                                let label_width = (ui.available_width() - 190.).max(100.);
+                                ui.allocate_ui_with_layout(egui::vec2(label_width, 38.), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                    ui.set_min_width(label_width);
+                                    settings_label(ui, "Capture shortcut", "Start a capture, or save and close.", muted);
+                                });
+                                ui.add_sized([174., 34.], egui::TextEdit::singleline(&mut self.preferences.capture.hotkey)
+                                    .hint_text("Command+B").margin(egui::vec2(10., 8.)));
+                            });
+                        } else {
+                            settings_label(ui, "Capture shortcut", "Start a capture, or save and close.", muted);
+                            ui.add_space(4.);
+                            ui.add(egui::TextEdit::singleline(&mut self.preferences.capture.hotkey)
+                                .desired_width(f32::INFINITY).margin(egui::vec2(10., 8.)));
+                        }
+                        ui.add_space(10.);
+                        ui.separator();
+                        ui.add_space(10.);
+                        settings_label(ui, "Screenshot folder", "Your images and notes are saved together here.", muted);
+                        ui.add_space(5.);
+                        ui.add(egui::TextEdit::singleline(&mut self.directory)
+                            .desired_width(f32::INFINITY).margin(egui::vec2(10., 8.)));
+                    });
+                    ui.add_space(20.);
+                    ui.label(egui::RichText::new("PRIVACY").size(10.).color(muted));
+                    ui.add_space(4.);
+                    settings_card(border).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("Screen Recording").size(13.).strong());
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.add_enabled(
+                                    self.draft.is_none() && self.source.is_none() && !self.loading,
+                                    egui::Button::new("Allow access"),
+                                ).clicked() {
+                                    self.exit_code.store(11, Ordering::SeqCst);
+                                    self.close(ui.ctx());
+                                }
+                            });
+                        });
+                        ui.label(egui::RichText::new("Lets SnapNote capture the part of your screen you select.").size(12.).color(muted));
+                        ui.add_space(7.);
+                        ui.label(egui::RichText::new("Enable SnapNote in System Settings → Privacy & Security → Screen & System Audio Recording. Relaunch if macOS asks.").size(11.).color(muted));
+                    });
+                    if !self.status.is_empty() {
+                        ui.add_space(12.);
+                        let status_color = if self.status.starts_with("Saved.") { accent } else { ink };
+                        ui.label(egui::RichText::new(&self.status).size(12.).color(status_color));
+                    }
+                });
+        });
+        ui.add_space(12.);
         ui.separator();
-        if ui
-            .add_enabled(
-                self.draft.is_none() && self.source.is_none() && !self.loading,
-                egui::Button::new("Request Screen Recording Permission"),
-            )
-            .clicked()
-        {
-            self.exit_code.store(11, Ordering::SeqCst);
-            self.close(ui.ctx());
-        }
-        ui.small("Enable SnapNote in System Settings → Privacy & Security → Screen & System Audio Recording. Relaunch after granting access if needed.");
-        if !self.status.is_empty() {
-            ui.label(&self.status);
-        }
+        ui.add_space(10.);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(concat!("SnapNote · ", env!("CARGO_PKG_VERSION")))
+                    .size(11.)
+                    .color(muted),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let save = egui::Button::new(
+                    egui::RichText::new("Save changes").color(egui::Color32::from_rgb(28, 35, 23)),
+                )
+                .fill(accent)
+                .corner_radius(6);
+                if ui.add(save).clicked() {
+                    self.preferences.storage.directory = PathBuf::from(&self.directory);
+                    self.status = match self.preferences.save(&self.config_path) {
+                        Ok(()) => {
+                            self.config = self.preferences.clone();
+                            "Saved. Shortcut changes apply when Settings closes.".into()
+                        }
+                        Err(error) => format!("Settings not saved: {error:#}"),
+                    };
+                    if let Some(capture) = self.source.take() {
+                        self.prepare(ui.ctx(), capture);
+                    }
+                }
+                if self.draft.is_some() && ui.button("Back to capture").clicked() {
+                    self.page = Page::Popup;
+                    self.place(ui.ctx());
+                    self.focus = true;
+                }
+            });
+        });
     }
 }
 impl eframe::App for Popup {
@@ -545,7 +644,7 @@ impl eframe::App for Popup {
                         self.loading = false;
                         self.status = format!("{error:#}");
                         self.page = Page::Settings;
-                        self.show(ctx);
+                        self.show_settings(ctx);
                     }
                 },
                 Event::Prepared { result, capture } => {
@@ -553,7 +652,10 @@ impl eframe::App for Popup {
                     self.source = capture;
                     match result {
                         Ok(draft) => {
-                            let prefix = format!("{}\n", draft.image_path().display());
+                            let prefix = format!(
+                                "{}\nView this screenshot.\n",
+                                draft.image_path().display()
+                            );
                             self.message = format!("{prefix}{}", self.message);
                             self.draft = Some(draft);
                             self.page = Page::Popup;
@@ -611,9 +713,7 @@ impl eframe::App for Popup {
                     self.page = Page::Settings;
                     self.preferences = self.config.clone();
                     self.directory = self.config.storage.directory.to_string_lossy().into_owned();
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(500., 380.)));
-                    self.show(ctx);
+                    self.show_settings(ctx);
                 }
                 Event::Recent => {
                     self.page = Page::Recent;
@@ -685,6 +785,8 @@ impl eframe::App for Popup {
         }
         let panel_frame = if self.page == Page::Popup {
             egui::Frame::NONE
+        } else if self.page == Page::Settings {
+            egui::Frame::new().fill(egui::Color32::from_rgb(18, 19, 20))
         } else {
             egui::Frame::new().fill(egui::Color32::from_rgb(30, 32, 38))
         };
@@ -786,7 +888,7 @@ impl eframe::App for Popup {
                 }
                 Page::Settings => {
                     egui::Frame::new()
-                        .inner_margin(12)
+                        .inner_margin(28)
                         .show(ui, |ui| self.settings_ui(ui));
                 }
                 Page::Recent => {
@@ -838,6 +940,18 @@ impl eframe::App for Popup {
         }
     }
 }
+fn settings_card(border: egui::Color32) -> egui::Frame {
+    egui::Frame::new()
+        .fill(egui::Color32::from_rgb(25, 27, 29))
+        .stroke(egui::Stroke::new(1., border))
+        .corner_radius(10)
+        .inner_margin(16)
+}
+fn settings_label(ui: &mut egui::Ui, title: &str, description: &str, muted: egui::Color32) {
+    ui.label(egui::RichText::new(title).size(13.).strong());
+    ui.label(egui::RichText::new(description).size(11.).color(muted));
+}
+
 // Use the press position directly: native window dragging must start on the press
 // frame, before egui's drag threshold, across the entire screenshot.
 fn screenshot_drag_started(rect: egui::Rect, event: &egui::Event) -> bool {
