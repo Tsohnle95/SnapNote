@@ -88,18 +88,30 @@ fn post(tx: &Sender<Event>, ctx: &egui::Context, event: Event) {
     ctx.request_repaint();
 }
 
+// Grow the annotation surface with the capture, leaving room for context and actions.
+fn preview_bounds(anchor: Option<CursorAnchor>) -> egui::Vec2 {
+    let display = anchor.map_or(egui::vec2(1440., 900.), |a| {
+        egui::vec2(a.width as f32, a.height as f32)
+    });
+    egui::vec2(
+        (display.x * 0.75).min(960.).min(display.x - 16.).max(1.),
+        (display.y * 0.60).min(720.).min(display.y - 230.).max(1.),
+    )
+}
+
 // Preview ends at the release cursor; the focused message begins directly below it.
 // Clamp the complete popup to that display so the input remains reachable at edges.
 fn popup_geometry(
     anchor: Option<CursorAnchor>,
     image: egui::Vec2,
 ) -> (egui::Vec2, Option<egui::Pos2>) {
-    let width = anchor.map_or(340., |a| (a.width as f32 - 16.).clamp(240., 340.));
-    let scale = ((width - 8.) / image.x.max(1.))
-        .min(220. / image.y.max(1.))
+    let bounds = preview_bounds(anchor);
+    let scale = ((bounds.x - 8.) / image.x.max(1.))
+        .min(bounds.y / image.y.max(1.))
         .min(1.);
     let preview = image * scale;
-    let size = egui::vec2(width, preview.y + 110.);
+    let width = (preview.x + 8.).max(340.).min(bounds.x);
+    let size = egui::vec2(width, preview.y + 146.);
     let position = anchor.map(|a| {
         let left = a.left as f32;
         let top = a.top as f32;
@@ -232,7 +244,10 @@ impl Popup {
             .vertical_centered(|ui| {
                 ui.add(
                     egui::Image::new(&texture)
-                        .max_size(egui::vec2(ui.available_width() - 4., 220.))
+                        .max_size(egui::vec2(
+                            ui.available_width() - 4.,
+                            preview_bounds(self.anchor).y,
+                        ))
                         .maintain_aspect_ratio(true)
                         .corner_radius(8)
                         .sense(egui::Sense::drag()),
@@ -240,15 +255,13 @@ impl Popup {
             })
             .inner;
         let rect = response.rect;
-        let toolbar_rect = egui::Rect::from_min_size(
-            rect.min + egui::vec2(4., 4.),
-            egui::vec2(rect.width() - 8., 26.),
-        );
+        ui.add_space(4.);
+        let (toolbar_rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 32.), egui::Sense::hover());
         let ctx = ui.ctx().clone();
         let pointer = ctx.input(|i| i.pointer.interact_pos());
-        let over_toolbar = pointer.is_some_and(|p| toolbar_rect.contains(p));
         let editable = !self.saving && !self.copying && !self.loading;
-        if editable && (response.hovered() || over_toolbar || self.tool != Tool::Move) {
+        if editable {
             let mut toolbar = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(toolbar_rect)
@@ -294,9 +307,11 @@ impl Popup {
         }
         if editable
             && self.tool == Tool::Move
-            && !over_toolbar
-            && response.is_pointer_button_down_on()
-            && ctx.input(|i| i.pointer.primary_pressed())
+            && ctx.input(|i| {
+                i.events
+                    .iter()
+                    .any(|event| screenshot_drag_started(rect, event))
+            })
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
@@ -323,7 +338,7 @@ impl Popup {
                 );
             }
         }
-        rect.height()
+        rect.height() + 36.
     }
     fn undo_annotation(&mut self) {
         if let Some(mark) = self.marks.pop() {
@@ -823,6 +838,17 @@ impl eframe::App for Popup {
         }
     }
 }
+// Use the press position directly: native window dragging must start on the press
+// frame, before egui's drag threshold, across the entire screenshot.
+fn screenshot_drag_started(rect: egui::Rect, event: &egui::Event) -> bool {
+    matches!(event, egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        ..
+    } if rect.contains(*pos))
+}
+
 fn drawing_event(
     active: &mut Option<Mark>,
     tool: Tool,
@@ -915,6 +941,36 @@ fn popup_action(ui: &mut egui::Ui, save: bool) -> egui::Response {
 mod tests {
     use super::*;
     #[test]
+    fn move_drag_starts_across_the_entire_screenshot() {
+        let rect = egui::Rect::from_min_size(egui::pos2(10., 10.), egui::vec2(900., 500.));
+        for pos in [
+            rect.left_top(),
+            rect.center_top() + egui::vec2(0., 2.),
+            rect.center(),
+            rect.right_bottom() - egui::vec2(1., 1.),
+        ] {
+            assert!(screenshot_drag_started(
+                rect,
+                &egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                }
+            ));
+        }
+        assert!(!screenshot_drag_started(
+            rect,
+            &egui::Event::PointerButton {
+                pos: rect.center_bottom() + egui::vec2(0., 20.),
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }
+        ));
+    }
+
+    #[test]
     fn fast_drag_retains_press_and_release_in_one_frame() {
         let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300., 200.));
         let toolbar = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(300., 30.));
@@ -945,6 +1001,18 @@ mod tests {
             assert!(!mark.segments().is_empty());
         }
     }
+    #[test]
+    fn large_captures_get_a_larger_annotation_surface() {
+        let small = popup_geometry(None, egui::vec2(300., 180.)).0;
+        let large = popup_geometry(None, egui::vec2(2400., 1600.)).0;
+        assert_eq!(small.x, 340.);
+        assert!(large.x > 800. && large.y > 600.);
+        assert!(large.x <= 960. && large.y <= 686.);
+        let tall = popup_geometry(None, egui::vec2(500., 3000.)).0;
+        assert_eq!(tall.y, 686.);
+        assert_eq!(tall.x, 340.);
+    }
+
     #[test]
     fn popup_places_preview_above_cursor_and_clamps_to_monitor() {
         let anchor = CursorAnchor {
