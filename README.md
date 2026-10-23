@@ -1,5 +1,7 @@
 # SnapNote
 
+**[Download for Mac](https://github.com/Tsohnle95/SnapNote/releases/latest/download/SnapNote-macOS-arm64.dmg)** · **[Website](https://tsohnle95.github.io/SnapNote/)** · [Release notes](https://github.com/Tsohnle95/SnapNote/releases/latest)
+
 A local-first Rust screenshot and context utility for macOS Apple Silicon. Select a region, describe it, and save a PNG, Markdown note, and JSON metadata. Copy text, a local screenshot reference, or actual image pixels for use in other applications.
 
 The idle application is a windowless menu-bar process. The editor runs in a separate process, created when needed and terminated when closed. Its window, renderer, textures, and screenshot buffers are released on exit. There is no WebView, server, database, telemetry, upload, or continuous screenshot monitoring.
@@ -27,7 +29,7 @@ cargo run
 ## Capture and save
 
 1. Press **Cmd+B** to start the native region selector, then drag and release. Escape cancels selection.
-2. A small preview appears above the release cursor with a focused message bubble beneath it. The actual PNG path is already inserted; type optional context after it.
+2. A preview sized to your capture appears near the release cursor with a focused message bubble beneath it. Large captures get more room, bounded by your display. The actual PNG path is already inserted; type optional context after it.
 3. Press **Cmd+C** or **Ctrl+C** to copy the complete path and message, if wanted. The popup stays open. A green checkmark and “Copied” appear at the bottom right for one second after success.
 4. Press **Cmd+B** again to save and close. **Escape** also saves and closes the popup. The green checkmark saves and closes. The red × deletes the unsaved capture and message, then closes. Closing never copies automatically. **Right-click anywhere in the popup** saves the completed capture and closes. Cancelling native region selection leaves no saved capture.
 
@@ -122,4 +124,12 @@ The default build uses **glow**. The comparison bundle is `dist/comparison/wgpu/
 
 ## Annotations and growing input
 
-The input grows with its content up to 144 logical pixels, then scrolls. Hover over the screenshot for Move, Pen, Arrow, Box, Undo, and Redo. Move drags the popup; the drawing tools add red marks. Cmd+Z and Cmd+Shift+Z undo and redo annotations when the message field is not focused; normal text undo remains available while typing. PNG annotations are applied off the UI thread before copying its reference or saving. Unedited images keep their original PNG bytes.
+The input grows with its content up to 144 logical pixels, then scrolls. The toolbar below the screenshot provides Move, Pen, Arrow, Box, Undo, and Redo. In Move mode, dragging anywhere on the screenshot moves the popup; the drawing tools add red marks. Cmd+Z and Cmd+Shift+Z undo and redo annotations when the message field is not focused; normal text undo remains available while typing. PNG annotations are applied off the UI thread before copying its reference or saving. Unedited images keep their original PNG bytes.
+
+## Website and releases
+
+The static landing page lives in `site/`. The `Publish landing page` workflow deploys it to GitHub Pages when those files change on `main`. All page assets are local; no build tools, scripts, analytics, or third-party requests are needed to view it. Download buttons target the latest release's stable `SnapNote-macOS-arm64.dmg` asset name.
+
+Run `./scripts/package-release.sh` on an Apple silicon Mac to build a DMG, ZIP, and SHA-256 checksums in `dist/release/`. Both downloads contain the complete app, including the editor helper. Release artwork is generated with `swift scripts/generate-release-art.swift`.
+
+For a new version, update the package version in `Cargo.toml` and `Cargo.lock`, add `docs/releases/vVERSION.md`, and create the matching Git tag. Run the `Build Mac release draft` workflow with that tag to build and attach the downloads to a draft for review. The workflow validates that the version, tag, and notes agree; it does not overwrite an existing release. Publish the draft after verification. The current app is ad-hoc signed and not notarized.

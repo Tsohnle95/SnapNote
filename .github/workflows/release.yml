@@ -1,0 +1,52 @@
+name: Build Mac release draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build (must match Cargo.toml)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: macos-15
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Validate release version and notes
+        shell: zsh {0}
+        run: |
+          set -eu
+          version="$(awk -F '\"' '/^version = / { print $2; exit }' Cargo.toml)"
+          [[ "$RELEASE_TAG" == "v$version" ]]
+          [[ -f "docs/releases/$RELEASE_TAG.md" ]]
+      - name: Set up Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Check app
+        run: cargo test --locked
+      - name: Package Apple silicon app
+        run: ./scripts/package-release.sh
+      - name: Create release draft with downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            dist/release/SnapNote-macOS-arm64.dmg \
+            dist/release/SnapNote-macOS-arm64.zip \
+            dist/release/SHA256SUMS.txt \
+            --verify-tag --draft \
+            --title "SnapNote $RELEASE_TAG" \
+            --notes-file "docs/releases/$RELEASE_TAG.md"
