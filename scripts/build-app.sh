@@ -1,0 +1,50 @@
+#!/bin/zsh
+set -eu
+cd "${0:A:h:h}"
+export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+renderer="${1:-glow}"
+case "$renderer" in
+  glow) target_dir="target"; bundle="dist/SnapNote.app" ;;
+  wgpu) target_dir="target/renderer-wgpu"; bundle="dist/comparison/wgpu/SnapNote.app" ;;
+  *) print -u2 'usage: build-app.sh [glow|wgpu]'; exit 2 ;;
+esac
+cargo build --release --locked --no-default-features --features "$renderer" --target-dir "$target_dir"
+mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
+cp "$target_dir/release/snapnote" "$bundle/Contents/MacOS/SnapNote"
+helper="$bundle/Contents/Helpers/SnapNote Editor.app"
+mkdir -p "$helper/Contents/MacOS" "$helper/Contents/Resources"
+cp "$target_dir/release/snapnote-editor" "$helper/Contents/MacOS/SnapNote Editor"
+cp assets/SnapNote.icns "$helper/Contents/Resources/SnapNote.icns"
+cat > "$helper/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>SnapNote Editor</string>
+<key>CFBundleIdentifier</key><string>local.snapnote.editor</string>
+<key>CFBundleName</key><string>SnapNote Editor</string>
+<key>CFBundleIconFile</key><string>SnapNote.icns</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.1.0</string>
+<key>LSUIElement</key><true/>
+<key>NSHighResolutionCapable</key><true/>
+</dict></plist>
+PLIST
+codesign --force --sign - "$helper"
+cp assets/SnapNote.icns "$bundle/Contents/Resources/SnapNote.icns"
+cat > "$bundle/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>SnapNote</string>
+<key>CFBundleIdentifier</key><string>local.snapnote.app</string>
+<key>CFBundleName</key><string>SnapNote</string>
+<key>CFBundleIconFile</key><string>SnapNote.icns</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.1.0</string>
+<key>LSMinimumSystemVersion</key><string>12.0</string>
+<key>LSUIElement</key><true/>
+<key>NSHighResolutionCapable</key><true/>
+</dict></plist>
+PLIST
+codesign --force --sign - "$bundle"
+print "Built $bundle ($renderer)"

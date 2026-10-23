@@ -1,0 +1,51 @@
+[package]
+name = "snapnote"
+version = "0.1.0"
+edition = "2024"
+default-run = "snapnote"
+
+[[bin]]
+name = "snapnote-editor"
+path = "src/editor_main.rs"
+
+[features]
+default = ["glow"]
+glow = ["eframe/glow"]
+wgpu = ["eframe/wgpu"]
+
+[dependencies]
+anyhow = "1"
+thiserror = "2"
+arboard = "3"
+# Native clipboard is required for Cmd+V and dictation tools that inject via paste.
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "accesskit", "clipboard"] }
+global-hotkey = "0.9"
+winit = { version = "0.30", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
+tempfile = "3"
+tray-icon = "0.26"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[dependencies.clap]
+version = "4"
+features = ["derive"]
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1"
+
+[dependencies.toml]
+version = "1.1"
+
+[dependencies.chrono]
+version = "0.4"
+features = ["serde"]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
