@@ -20,31 +20,30 @@ cargo --version
 
 ## Rebuild and update the installed app
 
-First choose **Quit** from SnapNote's menu-bar menu. Save and close any open capture first. Closing the popup alone leaves the resident running.
+Run one command:
 
 ```sh
 cd /Users/tdawg/code-repositories/SnapNote
-./scripts/build-app.sh
+./scripts/build-and-install.sh
 ```
 
-The script builds both executables in release mode with the locked dependencies, bundles the editor, and ad-hoc signs `dist/SnapNote.app`. On the first build Cargo needs internet access to download crates.
+It builds both executables in release mode with the locked dependencies, signs `dist/SnapNote.app` with the stable local **SnapNote Local Signing** identity, quits the running resident, replaces `/Applications/SnapNote.app`, verifies the signature, and relaunches the installed copy. The first build creates the signing identity in your login keychain; later builds reuse it, so Screen Recording permission stays granted. On the first build Cargo needs internet access to download crates.
 
-**Update the copy in Applications before launching it:**
+If a capture window is open, the script exits instead of discarding a possible unsaved draft. Close the window or quit SnapNote and rerun.
+
+Manual equivalent:
 
 ```sh
-ditto dist/SnapNote.app /Applications/SnapNote.app
-codesign --verify --deep --strict /Applications/SnapNote.app
-open /Applications/SnapNote.app
+./scripts/build-app.sh
+./scripts/install-app.sh
 ```
 
-If Terminal reports permission denied when copying, use Finder to replace `/Applications/SnapNote.app` with `dist/SnapNote.app`. For a user-only installation, copy to `~/Applications/SnapNote.app` instead and consistently launch that copy.
-
-Rebuilding `dist/SnapNote.app` does not update `/Applications/SnapNote.app`. An already-running resident also continues using its original installed location. Avoid running multiple copies; the configuration lock prevents a second resident from starting.
+`install-app.sh` installs `dist/SnapNote.app` and relaunches it. To use a user-only installation, set `SNAPNOTE_INSTALL_DIR="$HOME/Applications"` and consistently launch that copy.
 
 ## Launch without rebuilding
 
 ```sh
-open /Applications/SnapNote.app
+open -n /Applications/SnapNote.app
 ```
 
 The app starts in the menu bar with no popup. Press **Cmd+B**, select a region, then type or dictate context. The input starts with the image path and `View this screenshot.` on separate lines, with the cursor on the following line. **Cmd+C** or **Ctrl+C** copies that complete text and your message. The green checkmark or **Cmd+B** saves and closes. Right-click also saves and closes once a screenshot exists. The red × deletes the unsaved capture and message, then closes. **Escape** saves and closes the popup; Escape during native region selection cancels selection instead.
@@ -53,7 +52,20 @@ Default captures: `~/screenshots/snapshot/`. Shared settings: `~/Library/Applica
 
 ## Permissions after a rebuild
 
-An ad-hoc rebuild can invalidate macOS's saved Screen Recording authorization. If selection fails, open **System Settings → Privacy & Security → Screen & System Audio Recording**, remove the old SnapNote entry if necessary, add the exact installed app, and enable it. Then quit and relaunch SnapNote. Grant access to the main app, not the editor helper. The app does not bypass permissions.
+Local builds are signed with a stable self-signed **SnapNote Local Signing** certificate, so Screen Recording permission survives rebuilds. Ad-hoc signatures used to change identity on every build; that is why macOS kept asking. Keep the certificate in your login keychain and continue signing with it.
+
+One-time migration from an older ad-hoc build:
+
+```sh
+tccutil reset ScreenCapture local.snapnote.app
+./scripts/build-and-install.sh
+```
+
+Enable the app once in **System Settings → Privacy & Security → Screen & System Audio Recording**, then quit and relaunch if macOS asks. Later rebuilds and replacements do not need another grant. Grant access to the main app, not the editor helper. The app does not bypass permissions.
+
+`dist/SnapNote.app` and `/Applications/SnapNote.app` share a bundle identifier, so macOS may resolve `open` to whichever copy it registered last. Launch the exact installed copy with `open -n /Applications/SnapNote.app`, or run `/Applications/SnapNote.app/Contents/MacOS/SnapNote` directly. Both copies use the same stable signing identity, so either keeps the permission.
+
+If you reinstall the certificate or switch signing identities, reset the stale TCC entry once with `tccutil reset ScreenCapture local.snapnote.app` and grant again. Use `SNAPNOTE_ADHOC_SIGNING=1` only for a throwaway build: ad-hoc signing deliberately restores the old re-prompt behaviour.
 
 ## Checks and CLI
 

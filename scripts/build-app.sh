@@ -9,6 +9,16 @@ case "$renderer" in
   wgpu) target_dir="target/renderer-wgpu"; bundle="dist/comparison/wgpu/SnapNote.app" ;;
   *) print -u2 'usage: build-app.sh [glow|wgpu]'; exit 2 ;;
 esac
+# Keep one stable signing identity so macOS keeps Screen Recording permission
+# across rebuilds. SNAPNOTE_ADHOC_SIGNING=1 is an explicit opt-out for throwaway
+# builds and release packaging.
+if [[ "${SNAPNOTE_ADHOC_SIGNING:-0}" == "1" ]]; then
+  signing_identity="-"
+  print -u2 "Warning: ad-hoc signing will reset Screen Recording permission on every rebuild."
+else
+  signing_identity="${SNAPNOTE_SIGNING_IDENTITY:-SnapNote Local Signing}"
+  ./scripts/dev-signing-identity.sh "$signing_identity"
+fi
 cargo build --release --locked --no-default-features --features "$renderer" --target-dir "$target_dir"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$target_dir/release/snapnote" "$bundle/Contents/MacOS/SnapNote"
@@ -30,7 +40,7 @@ cat > "$helper/Contents/Info.plist" <<PLIST
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
-codesign --force --sign - "$helper"
+codesign --force --sign "$signing_identity" "$helper"
 cp assets/SnapNote.icns "$bundle/Contents/Resources/SnapNote.icns"
 cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -47,5 +57,5 @@ cat > "$bundle/Contents/Info.plist" <<PLIST
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
-codesign --force --sign - "$bundle"
-print "Built $bundle ($renderer)"
+codesign --force --sign "$signing_identity" "$bundle"
+print "Built $bundle ($renderer, signed by $signing_identity)"

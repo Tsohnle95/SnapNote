@@ -10,14 +10,15 @@ The idle application is a windowless menu-bar process. The editor runs in a sepa
 
 See [BUILDING.md](BUILDING.md) for manual rebuild, installation, launch, and permission-recovery commands. Rebuilding `dist` alone does not update the installed Applications copy.
 
-Requires a current stable Rust toolchain, macOS, and Xcode command line tools. The local release bundle is ad-hoc signed; it is not notarized for distribution.
+Requires a current stable Rust toolchain, macOS, and Xcode command line tools. Local builds are signed with a stable self-signed development certificate so macOS keeps Screen Recording permission across rebuilds. Release downloads are ad-hoc signed and not notarized for distribution.
 
 ```sh
-./scripts/build-app.sh
-open dist/SnapNote.app
+./scripts/build-and-install.sh
 ```
 
-The bundle includes the resident executable and an embedded editor helper. Keep the entire bundle together. To install, quit SnapNote and copy `dist/SnapNote.app` to `~/Applications/` or `/Applications/` using Finder. Grant permissions to the copy you actually run.
+The script builds, signs with the stable local development identity, replaces `/Applications/SnapNote.app`, and relaunches it. It refuses to install while a capture window is open, so an unsaved draft cannot be lost.
+
+The bundle includes the resident executable and an embedded editor helper. Keep the entire bundle together. For a user-only installation, set `SNAPNOTE_INSTALL_DIR="$HOME/Applications"` and consistently launch that copy.
 
 For development, build both executables before launching:
 
@@ -80,6 +81,10 @@ default_mode = "agent"
 
 [ui]
 close_after_save = true
+# Annotation toolbar and message box colors. Choose them in
+# Settings → Appearance (gear icon in the capture toolbar), or set hex RGB here.
+annotation_color = "#3D4FD8"
+message_color = "#3D4FD8"
 ```
 
 Use `--config /absolute/path/config.toml` or `SNAPNOTE_CONFIG` to select another configuration. The GUI explains malformed configuration and offers defaults without overwriting the original until preferences are saved. CLI operations report the error on stderr instead of silently reading a different library.
@@ -105,7 +110,7 @@ The packaged CLI is `SnapNote.app/Contents/MacOS/SnapNote`. An optional shell al
 
 Enable **SnapNote** in System Settings → Privacy & Security → Screen & System Audio Recording. A permission request button is available in SnapNote Settings. Quit and relaunch after granting access if macOS requires it. Do not grant the editor helper screen access: capture belongs to the resident.
 
-Ad-hoc rebuilds change the application's code-signing identity. An existing enabled toggle may refer to an older build and still fail permission checks. If that happens, remove the old SnapNote entry, add the final bundle you are running, enable it, and relaunch. Development and installed copies may receive different permission decisions. No permission is bypassed or changed automatically.
+Ad-hoc rebuilds change the application's code-signing identity. The local build script avoids that by signing with a stable **SnapNote Local Signing** certificate created on first use. If an older ad-hoc build left a stale entry, run `tccutil reset ScreenCapture local.snapnote.app`, rebuild, relaunch the installed copy, and grant permission once. Later rebuilds keep the grant. Do not grant the editor helper screen access: capture belongs to the resident.
 
 ## Validation and renderer comparison
 

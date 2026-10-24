@@ -2,7 +2,14 @@
 set -eu
 cd "${0:A:h:h}"
 [[ "$(uname -m)" == arm64 ]] || { print -u2 'Build this release on an Apple silicon Mac.'; exit 1; }
-./scripts/build-app.sh
+# Releases are not notarized. Sign with an explicit Developer ID if provided;
+# otherwise keep the historical ad-hoc signature instead of using the local
+# development certificate, which only exists on this Mac.
+if [[ -n "${SNAPNOTE_SIGNING_IDENTITY:-}" ]]; then
+  ./scripts/build-app.sh
+else
+  SNAPNOTE_ADHOC_SIGNING=1 ./scripts/build-app.sh
+fi
 bundle="dist/SnapNote.app"
 output="${PWD}/dist/release"
 mkdir -p "$output"
