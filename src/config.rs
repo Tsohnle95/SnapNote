@@ -58,7 +58,12 @@ pub struct ClipboardConfig {
 #[serde(default)]
 pub struct UiConfig {
     pub close_after_save: bool,
+    /// Hex RGB for the annotation toolbar surface, e.g. "#3D4FD8".
+    pub annotation_color: String,
+    /// Hex RGB for the message surface, e.g. "#3D4FD8".
+    pub message_color: String,
 }
+pub const DEFAULT_BOX_COLOR: &str = "#3D4FD8";
 impl Default for CaptureConfig {
     fn default() -> Self {
         Self {
@@ -77,6 +82,8 @@ impl Default for UiConfig {
     fn default() -> Self {
         Self {
             close_after_save: true,
+            annotation_color: DEFAULT_BOX_COLOR.into(),
+            message_color: DEFAULT_BOX_COLOR.into(),
         }
     }
 }

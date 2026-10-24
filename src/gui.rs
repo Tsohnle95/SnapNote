@@ -43,11 +43,278 @@ enum Event {
     Recent,
     Listed(anyhow::Result<Vec<Snippet>>),
 }
-#[derive(PartialEq)]
+/// High-contrast palette for the capture popup.
+///
+/// The popup floats over arbitrary screenshots, so surfaces are opaque and every
+/// text pair clears WCAG AA (4.5:1 for text, 3:1 for borders and icons). The
+/// contrast test below keeps these values from regressing.
+mod theme {
+    use eframe::egui::{self, Color32, CornerRadius, Stroke};
+
+    pub const PANEL: Color32 = Color32::from_rgb(25, 28, 33);
+    pub const FIELD_BG: Color32 = Color32::from_rgb(20, 23, 27);
+    pub const BORDER: Color32 = Color32::from_rgb(112, 121, 135);
+    pub const TEXT: Color32 = Color32::from_rgb(242, 244, 247);
+    pub const TEXT_MUTED: Color32 = Color32::from_rgb(195, 200, 208);
+    pub const TEXT_HINT: Color32 = Color32::from_rgb(170, 177, 188);
+    pub const BUTTON_BG: Color32 = Color32::from_rgb(52, 58, 67);
+    pub const BUTTON_HOVER: Color32 = Color32::from_rgb(67, 75, 86);
+    pub const BUTTON_ACTIVE: Color32 = Color32::from_rgb(42, 48, 56);
+    pub const ACCENT: Color32 = Color32::from_rgb(195, 220, 168);
+    pub const ACCENT_INK: Color32 = Color32::from_rgb(21, 26, 18);
+    pub const SUCCESS: Color32 = Color32::from_rgb(99, 224, 142);
+    pub const DANGER: Color32 = Color32::from_rgb(255, 138, 138);
+    pub const DEFAULT_BOX: Color32 = Color32::from_rgb(61, 79, 216);
+
+    /// Vibrant box colors that keep white text above 4.5:1.
+    pub const VIBRANT: [(&str, Color32); 8] = [
+        ("Indigo", Color32::from_rgb(61, 79, 216)),
+        ("Violet", Color32::from_rgb(109, 59, 209)),
+        ("Magenta", Color32::from_rgb(166, 36, 122)),
+        ("Crimson", Color32::from_rgb(179, 36, 60)),
+        ("Teal", Color32::from_rgb(15, 118, 110)),
+        ("Emerald", Color32::from_rgb(31, 122, 77)),
+        ("Ocean", Color32::from_rgb(14, 110, 158)),
+        ("Amber", Color32::from_rgb(146, 88, 8)),
+    ];
+
+    /// Muted, standard colors for a quieter popup. These are darker than the
+    /// vibrant set, so the derived controls gain contrast rather than lose it.
+    pub const STANDARD: [(&str, Color32); 8] = [
+        ("Graphite", Color32::from_rgb(60, 64, 70)),
+        ("Slate", Color32::from_rgb(74, 84, 100)),
+        ("Steel", Color32::from_rgb(64, 76, 86)),
+        ("Navy", Color32::from_rgb(47, 62, 97)),
+        ("Forest", Color32::from_rgb(48, 82, 55)),
+        ("Olive", Color32::from_rgb(79, 74, 43)),
+        ("Wine", Color32::from_rgb(99, 40, 60)),
+        ("Brown", Color32::from_rgb(92, 68, 52)),
+    ];
+
+    pub fn mix(a: Color32, b: Color32, amount: f32) -> Color32 {
+        let channel = |a: u8, b: u8| (a as f32 * (1.0 - amount) + b as f32 * amount).round() as u8;
+        Color32::from_rgb(
+            channel(a.r(), b.r()),
+            channel(a.g(), b.g()),
+            channel(a.b(), b.b()),
+        )
+    }
+
+    pub fn box_border(fill: Color32) -> Color32 {
+        mix(fill, TEXT, 0.7)
+    }
+
+    pub fn box_hint(fill: Color32) -> Color32 {
+        mix(fill, TEXT, 0.96)
+    }
+
+    pub fn button_fill(fill: Color32) -> Color32 {
+        mix(fill, Color32::BLACK, 0.55)
+    }
+
+    pub fn button_hover(fill: Color32) -> Color32 {
+        mix(fill, Color32::BLACK, 0.42)
+    }
+
+    pub fn button_active(fill: Color32) -> Color32 {
+        mix(fill, Color32::BLACK, 0.64)
+    }
+
+    pub fn parse_color(value: &str) -> Option<Color32> {
+        let hex = value.trim().trim_start_matches('#');
+        if hex.len() != 6 {
+            return None;
+        }
+        let channel = |index: usize| u8::from_str_radix(&hex[index..index + 2], 16).ok();
+        Some(Color32::from_rgb(channel(0)?, channel(2)?, channel(4)?))
+    }
+
+    pub fn color_hex(color: Color32) -> String {
+        format!("#{:02X}{:02X}{:02X}", color.r(), color.g(), color.b())
+    }
+
+    pub fn color_swatches(
+        ui: &mut egui::Ui,
+        current: &mut Color32,
+        palette: &[(&str, Color32)],
+    ) -> bool {
+        let mut changed = false;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(5., 5.);
+            for (name, color) in palette {
+                let (rect, response) =
+                    ui.allocate_exact_size(egui::vec2(20., 20.), egui::Sense::click());
+                let selected = *current == *color;
+                ui.painter().rect_filled(rect, 5, *color);
+                ui.painter().rect_stroke(
+                    rect,
+                    5,
+                    Stroke::new(
+                        if selected { 2.0 } else { 1.0 },
+                        if selected { TEXT } else { BORDER },
+                    ),
+                    egui::StrokeKind::Inside,
+                );
+                if response.clicked() {
+                    *current = *color;
+                    changed = true;
+                }
+                response.on_hover_text(*name);
+            }
+        });
+        changed
+    }
+
+    pub fn color_name(color: Color32) -> Option<&'static str> {
+        VIBRANT
+            .into_iter()
+            .chain(STANDARD)
+            .find_map(|(name, candidate)| (candidate == color).then_some(name))
+    }
+
+    pub fn widget(
+        weak_bg_fill: Color32,
+        bg_stroke: Color32,
+        fg: Color32,
+    ) -> egui::style::WidgetVisuals {
+        egui::style::WidgetVisuals {
+            weak_bg_fill,
+            bg_fill: weak_bg_fill,
+            bg_stroke: Stroke::new(1.0, bg_stroke),
+            fg_stroke: Stroke::new(1.0, fg),
+            corner_radius: CornerRadius::same(6),
+            expansion: 0.0,
+        }
+    }
+
+    pub fn visuals() -> egui::Visuals {
+        let mut visuals = egui::Visuals::dark();
+        visuals.override_text_color = Some(TEXT);
+        visuals.weak_text_color = Some(TEXT_HINT);
+        visuals.weak_text_alpha = 1.0;
+        visuals.panel_fill = PANEL;
+        visuals.window_fill = PANEL;
+        visuals.window_stroke = Stroke::new(1.0, BORDER);
+        visuals.extreme_bg_color = FIELD_BG;
+        visuals.text_edit_bg_color = Some(FIELD_BG);
+        visuals.selection.bg_fill = ACCENT;
+        visuals.selection.stroke = Stroke::new(1.0, ACCENT_INK);
+        // Disabled toolbar actions must stay legible instead of vanishing.
+        visuals.disabled_alpha = 0.72;
+        visuals.widgets.noninteractive = widget(PANEL, BORDER, TEXT_MUTED);
+        visuals.widgets.inactive = widget(BUTTON_BG, BORDER, TEXT);
+        visuals.widgets.hovered = widget(BUTTON_HOVER, TEXT_MUTED, TEXT);
+        visuals.widgets.active = widget(BUTTON_ACTIVE, ACCENT, TEXT);
+        visuals.widgets.open = widget(BUTTON_HOVER, TEXT_MUTED, TEXT);
+        visuals
+    }
+
+    #[cfg(test)]
+    pub fn contrast_ratio(a: Color32, b: Color32) -> f32 {
+        fn linear(channel: u8) -> f32 {
+            let channel = channel as f32 / 255.0;
+            if channel <= 0.04045 {
+                channel / 12.92
+            } else {
+                ((channel + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        fn luminance(color: Color32) -> f32 {
+            0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
+        }
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+}
+
+/// Chrome for the Settings window: a quiet sidebar beside a content column,
+/// with softly raised cards instead of nested popup surfaces.
+mod settings_theme {
+    use eframe::egui::{self, Color32, CornerRadius, Stroke};
+
+    pub const BODY: Color32 = Color32::from_rgb(17, 17, 19);
+    pub const SIDEBAR: Color32 = Color32::from_rgb(11, 11, 12);
+    pub const CARD: Color32 = Color32::from_rgb(28, 28, 30);
+    pub const BORDER: Color32 = Color32::from_rgb(44, 44, 46);
+    pub const TEXT: Color32 = Color32::from_rgb(242, 242, 247);
+    pub const MUTED: Color32 = Color32::from_rgb(152, 152, 159);
+    pub const FAINT: Color32 = Color32::from_rgb(108, 108, 115);
+    pub const SELECTED: Color32 = Color32::from_rgb(43, 43, 46);
+    pub const HOVER: Color32 = Color32::from_rgb(28, 28, 30);
+    pub const FIELD: Color32 = Color32::from_rgb(22, 22, 24);
+    pub const ACCENT: Color32 = Color32::from_rgb(190, 207, 175);
+    pub const ACCENT_INK: Color32 = Color32::from_rgb(28, 35, 23);
+    pub const SIDEBAR_WIDTH: f32 = 200.;
+
+    pub fn apply(ui: &mut egui::Ui) {
+        let style = ui.style_mut();
+        style.spacing.item_spacing = egui::vec2(8., 8.);
+        style.spacing.button_padding = egui::vec2(13., 7.);
+        style.visuals.override_text_color = Some(TEXT);
+        style.visuals.weak_text_color = Some(MUTED);
+        style.visuals.panel_fill = BODY;
+        style.visuals.window_fill = BODY;
+        style.visuals.extreme_bg_color = FIELD;
+        style.visuals.text_edit_bg_color = Some(FIELD);
+        style.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(38, 38, 41);
+        style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(38, 38, 41);
+        style.visuals.widgets.inactive.bg_stroke = Stroke::new(1., BORDER);
+        style.visuals.widgets.inactive.fg_stroke = Stroke::new(1., TEXT);
+        style.visuals.widgets.inactive.corner_radius = CornerRadius::same(7);
+        style.visuals.widgets.hovered.weak_bg_fill = SELECTED;
+        style.visuals.widgets.hovered.bg_stroke = Stroke::new(1., MUTED);
+        style.visuals.widgets.hovered.fg_stroke = Stroke::new(1., TEXT);
+        style.visuals.widgets.hovered.corner_radius = CornerRadius::same(7);
+        style.visuals.widgets.active.weak_bg_fill = Color32::from_rgb(52, 52, 56);
+        style.visuals.widgets.active.bg_stroke = Stroke::new(1., TEXT);
+        style.visuals.widgets.active.corner_radius = CornerRadius::same(7);
+        style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1., BORDER);
+        style.visuals.selection.bg_fill = ACCENT;
+        style.visuals.selection.stroke = Stroke::new(1., ACCENT_INK);
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
 enum Page {
     Popup,
     Settings,
     Recent,
+}
+#[derive(Clone, Copy, PartialEq)]
+enum SettingsTab {
+    Settings,
+    Appearance,
+    Privacy,
+}
+impl SettingsTab {
+    const ALL: [Self; 3] = [Self::Settings, Self::Appearance, Self::Privacy];
+    fn label(self) -> &'static str {
+        match self {
+            Self::Settings => "Settings",
+            Self::Appearance => "Appearance",
+            Self::Privacy => "Privacy",
+        }
+    }
+    fn icon(self) -> NavIcon {
+        match self {
+            Self::Settings => NavIcon::Sliders,
+            Self::Appearance => NavIcon::Palette,
+            Self::Privacy => NavIcon::Shield,
+        }
+    }
+}
+#[derive(Clone, Copy)]
+enum NavIcon {
+    Sliders,
+    Palette,
+    Shield,
+}
+#[derive(Clone, Copy, PartialEq)]
+enum WindowAction {
+    None,
+    Close,
+    Minimize,
+    Zoom,
 }
 struct Popup {
     tx: Sender<Event>,
@@ -82,6 +349,10 @@ struct Popup {
     message_id: Option<egui::Id>,
     active_mark: Option<Mark>,
     popup_height: f32,
+    themed: Option<Page>,
+    annotation_color: egui::Color32,
+    message_color: egui::Color32,
+    settings_tab: SettingsTab,
 }
 fn post(tx: &Sender<Event>, ctx: &egui::Context, event: Event) {
     let _ = tx.send(event);
@@ -146,20 +417,25 @@ pub fn run(
     let mut native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_visible(!is_popup)
+            .with_title(if is_settings {
+                "SnapNote Settings"
+            } else {
+                "SnapNote"
+            })
             .with_inner_size(if is_popup {
                 [340., 300.]
             } else if is_settings {
-                [640., 600.]
+                [900., 660.]
             } else {
                 [500., 380.]
             })
             .with_min_inner_size(if is_settings {
-                [420., 380.]
+                [640., 480.]
             } else {
                 [240., 150.]
             })
-            .with_decorations(!is_popup)
-            .with_transparent(is_popup)
+            .with_decorations(!is_popup && !is_settings)
+            .with_transparent(is_popup || is_settings)
             .with_always_on_top(),
         ..Default::default()
     };
@@ -178,6 +454,10 @@ pub fn run(
         native,
         Box::new(move |cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            if is_settings {
+                cc.egui_ctx
+                    .send_viewport_cmd(egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark));
+            }
             let (tx, rx) = mpsc::channel();
             let pipe = tx.clone();
             let wake = cc.egui_ctx.clone();
@@ -207,6 +487,10 @@ pub fn run(
             if page == Page::Recent {
                 let _ = tx.send(Event::Recent);
             }
+            let annotation_color =
+                theme::parse_color(&config.ui.annotation_color).unwrap_or(theme::DEFAULT_BOX);
+            let message_color =
+                theme::parse_color(&config.ui.message_color).unwrap_or(theme::DEFAULT_BOX);
             Ok(Box::new(Popup {
                 tx,
                 rx,
@@ -240,6 +524,10 @@ pub fn run(
                 message_id: None,
                 active_mark: None,
                 popup_height: 0.,
+                themed: None,
+                annotation_color,
+                message_color,
+                settings_tab: SettingsTab::Settings,
             }))
         }),
     )
@@ -268,7 +556,7 @@ impl Popup {
         let rect = response.rect;
         ui.add_space(4.);
         let (toolbar_rect, _) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), 32.), egui::Sense::hover());
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 36.), egui::Sense::hover());
         let ctx = ui.ctx().clone();
         let pointer = ctx.input(|i| i.pointer.interact_pos());
         let editable = !self.saving && !self.copying && !self.loading;
@@ -278,13 +566,38 @@ impl Popup {
                     .max_rect(toolbar_rect)
                     .layout(egui::Layout::left_to_right(egui::Align::Center)),
             );
+            let fill = self.annotation_color;
+            let border = theme::box_border(fill);
             egui::Frame::new()
-                .fill(egui::Color32::from_rgba_unmultiplied(25, 27, 32, 240))
-                .corner_radius(6)
-                .inner_margin(3)
+                .fill(fill)
+                .stroke(egui::Stroke::new(1., border))
+                .corner_radius(8)
+                .inner_margin(4)
+                .shadow(egui::epaint::Shadow {
+                    offset: [0, 2],
+                    blur: 8,
+                    spread: 0,
+                    color: egui::Color32::from_black_alpha(110),
+                })
                 .show(&mut toolbar, |ui| {
+                    let visuals = ui.visuals_mut();
+                    visuals.override_text_color = Some(theme::TEXT);
+                    visuals.weak_text_color = Some(theme::box_hint(fill));
+                    visuals.widgets.noninteractive =
+                        theme::widget(theme::button_fill(fill), border, theme::TEXT);
+                    visuals.widgets.inactive =
+                        theme::widget(theme::button_fill(fill), border, theme::TEXT);
+                    visuals.widgets.hovered =
+                        theme::widget(theme::button_hover(fill), theme::TEXT, theme::TEXT);
+                    visuals.widgets.active =
+                        theme::widget(theme::button_active(fill), theme::TEXT, theme::TEXT);
+                    visuals.widgets.open =
+                        theme::widget(theme::button_hover(fill), theme::TEXT, theme::TEXT);
+                    visuals.selection.bg_fill = theme::button_hover(fill);
+                    visuals.selection.stroke = egui::Stroke::new(1., theme::TEXT);
+
                     ui.spacing_mut().item_spacing.x = 4.;
-                    ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
+                    ui.spacing_mut().button_padding = egui::vec2(7., 3.);
                     for (tool, label) in [
                         (Tool::Move, "Move"),
                         (Tool::Pen, "Pen"),
@@ -306,6 +619,9 @@ impl Popup {
                         .clicked()
                     {
                         self.redo_annotation();
+                    }
+                    if settings_gear_button(ui).clicked() {
+                        self.open_settings(ui.ctx());
                     }
                 });
         }
@@ -349,7 +665,7 @@ impl Popup {
                 );
             }
         }
-        rect.height() + 36.
+        rect.height() + 40.
     }
     fn undo_annotation(&mut self) {
         if let Some(mark) = self.marks.pop() {
@@ -360,6 +676,20 @@ impl Popup {
         if let Some(mark) = self.redo_marks.pop() {
             self.marks.push(mark);
         }
+    }
+    /// Reload the popup surfaces from the saved configuration.
+    fn sync_box_colors(&mut self) {
+        self.annotation_color =
+            theme::parse_color(&self.config.ui.annotation_color).unwrap_or(theme::DEFAULT_BOX);
+        self.message_color =
+            theme::parse_color(&self.config.ui.message_color).unwrap_or(theme::DEFAULT_BOX);
+    }
+    /// Open the shared Settings page from inside the capture popup.
+    fn open_settings(&mut self, ctx: &egui::Context) {
+        self.page = Page::Settings;
+        self.preferences = self.config.clone();
+        self.directory = self.config.storage.directory.to_string_lossy().into_owned();
+        self.show_settings(ctx);
     }
     fn discard(&mut self, ctx: &egui::Context) {
         // The draft owns only this unsaved capture; dropping it removes the PNG
@@ -381,13 +711,33 @@ impl Popup {
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
     fn show_settings(&self, ctx: &egui::Context) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
-        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(420., 380.)));
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(640., 600.)));
+        ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark));
+        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
+            egui::WindowLevel::Normal,
+        ));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title("SnapNote Settings".into()));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+        let size = egui::vec2(900., 660.);
+        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(640., 480.)));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+        // Opening from a capture near a screen edge should not push the larger
+        // settings window off that display.
+        if let Some(anchor) = self.anchor {
+            let left = anchor.left as f32;
+            let top = anchor.top as f32;
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
+                (left + (anchor.width as f32 - size.x) / 2.).max(left + 8.),
+                (top + (anchor.height as f32 - size.y) / 2.).max(top + 8.),
+            )));
+        }
         self.show(ctx);
     }
     fn place(&mut self, ctx: &egui::Context) {
         let (size, position) = popup_geometry(self.anchor, self.preview_size);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title("SnapNote".into()));
+        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
+            egui::WindowLevel::AlwaysOnTop,
+        ));
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(240., 150.)));
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
@@ -465,125 +815,212 @@ impl Popup {
         });
     }
     fn settings_ui(&mut self, ui: &mut egui::Ui) {
-        let ink = egui::Color32::from_rgb(231, 233, 235);
-        let muted = egui::Color32::from_rgb(149, 154, 158);
-        let border = egui::Color32::from_rgb(49, 52, 55);
-        let accent = egui::Color32::from_rgb(190, 207, 175);
-        let style = ui.style_mut();
-        style.spacing.item_spacing = egui::vec2(8., 6.);
-        style.spacing.button_padding = egui::vec2(14., 9.);
-        style.visuals.override_text_color = Some(ink);
-        style.visuals.extreme_bg_color = egui::Color32::from_rgb(18, 20, 22);
-        style.visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(29, 32, 35);
-        style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1., border);
-        style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
-        style.visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(43, 47, 51);
-        style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1., muted);
-        style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
-        style.visuals.selection.bg_fill = egui::Color32::from_rgb(64, 79, 53);
-        style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1., border);
-
-        let content_height = (ui.available_height() - 73.).max(120.);
-        ui.allocate_ui(egui::vec2(ui.available_width(), content_height), |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("settings_scroll")
-                .max_height(content_height)
-                .auto_shrink([false, false])
+        settings_theme::apply(ui);
+        ui.spacing_mut().item_spacing = egui::vec2(0., 0.);
+        ui.horizontal_top(|ui| {
+            settings_sidebar(ui, &mut self.settings_tab);
+            egui::Frame::new()
+                .fill(settings_theme::BODY)
+                .inner_margin(egui::Margin::symmetric(26, 20))
                 .show(ui, |ui| {
-                    ui.label(egui::RichText::new("Settings").size(24.).strong());
-                    ui.label(egui::RichText::new("A few things to make SnapNote yours.").size(12.).color(muted));
-                    ui.add_space(22.);
-                    ui.label(egui::RichText::new("CAPTURE").size(10.).color(muted));
-                    ui.add_space(4.);
-                    settings_card(border).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        if ui.available_width() >= 480. {
-                            ui.horizontal(|ui| {
-                                let label_width = (ui.available_width() - 190.).max(100.);
-                                ui.allocate_ui_with_layout(egui::vec2(label_width, 38.), egui::Layout::top_down(egui::Align::Min), |ui| {
-                                    ui.set_min_width(label_width);
-                                    settings_label(ui, "Capture shortcut", "Start a capture, or save and close.", muted);
-                                });
-                                ui.add_sized([174., 34.], egui::TextEdit::singleline(&mut self.preferences.capture.hotkey)
-                                    .hint_text("Command+B").margin(egui::vec2(10., 8.)));
-                            });
-                        } else {
-                            settings_label(ui, "Capture shortcut", "Start a capture, or save and close.", muted);
-                            ui.add_space(4.);
-                            ui.add(egui::TextEdit::singleline(&mut self.preferences.capture.hotkey)
-                                .desired_width(f32::INFINITY).margin(egui::vec2(10., 8.)));
-                        }
-                        ui.add_space(10.);
-                        ui.separator();
-                        ui.add_space(10.);
-                        settings_label(ui, "Screenshot folder", "Your images and notes are saved together here.", muted);
-                        ui.add_space(5.);
-                        ui.add(egui::TextEdit::singleline(&mut self.directory)
-                            .desired_width(f32::INFINITY).margin(egui::vec2(10., 8.)));
-                    });
-                    ui.add_space(20.);
-                    ui.label(egui::RichText::new("PRIVACY").size(10.).color(muted));
-                    ui.add_space(4.);
-                    settings_card(border).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Screen Recording").size(13.).strong());
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.add_enabled(
-                                    self.draft.is_none() && self.source.is_none() && !self.loading,
-                                    egui::Button::new("Allow access"),
-                                ).clicked() {
-                                    self.exit_code.store(11, Ordering::SeqCst);
-                                    self.close(ui.ctx());
-                                }
-                            });
-                        });
-                        ui.label(egui::RichText::new("Lets SnapNote capture the part of your screen you select.").size(12.).color(muted));
-                        ui.add_space(7.);
-                        ui.label(egui::RichText::new("Enable SnapNote in System Settings → Privacy & Security → Screen & System Audio Recording. Relaunch if macOS asks.").size(11.).color(muted));
-                    });
-                    if !self.status.is_empty() {
-                        ui.add_space(12.);
-                        let status_color = if self.status.starts_with("Saved.") { accent } else { ink };
-                        ui.label(egui::RichText::new(&self.status).size(12.).color(status_color));
-                    }
+                    ui.vertical(|ui| self.settings_body(ui));
                 });
         });
-        ui.add_space(12.);
-        ui.separator();
+        match settings_titlebar(ui) {
+            WindowAction::None => {}
+            WindowAction::Close => self.finish(ui.ctx()),
+            WindowAction::Minimize => {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
+            WindowAction::Zoom => {
+                let maximized = ui
+                    .ctx()
+                    .input(|input| input.viewport().maximized.unwrap_or(false));
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            }
+        }
+        // Borderless windows have no shadow; a hairline keeps the edge defined.
+        ui.painter().rect_stroke(
+            ui.max_rect(),
+            0,
+            egui::Stroke::new(1., settings_theme::BORDER),
+            egui::StrokeKind::Inside,
+        );
+    }
+    fn settings_body(&mut self, ui: &mut egui::Ui) {
+        ui.set_min_height(ui.available_height());
+        ui.label(
+            egui::RichText::new(self.settings_tab.label())
+                .size(26.)
+                .strong(),
+        );
         ui.add_space(10.);
+        ui.separator();
+        ui.add_space(14.);
+        let footer = 46.;
+        let scroll_height = (ui.available_height() - footer).max(90.);
+        let tab = self.settings_tab;
+        egui::ScrollArea::vertical()
+            .id_salt(("settings_scroll", tab.label()))
+            .max_height(scroll_height)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                match tab {
+                    SettingsTab::Settings => self.settings_general(ui),
+                    SettingsTab::Appearance => self.settings_appearance(ui),
+                    SettingsTab::Privacy => self.settings_privacy(ui),
+                }
+            });
+        if !self.status.is_empty() {
+            ui.add_space(6.);
+            let color = if self.status.starts_with("Saved.") {
+                settings_theme::ACCENT
+            } else {
+                theme::DANGER
+            };
+            ui.label(egui::RichText::new(&self.status).size(12.).color(color));
+        }
+        ui.add_space(6.);
+        ui.separator();
+        ui.add_space(8.);
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(concat!("SnapNote · ", env!("CARGO_PKG_VERSION")))
-                    .size(11.)
-                    .color(muted),
-            );
+            if self.draft.is_some() && ui.button("Back to capture").clicked() {
+                self.page = Page::Popup;
+                self.place(ui.ctx());
+                self.focus = true;
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let save = egui::Button::new(
-                    egui::RichText::new("Save changes").color(egui::Color32::from_rgb(28, 35, 23)),
+                    egui::RichText::new("Save changes").color(settings_theme::ACCENT_INK),
                 )
-                .fill(accent)
-                .corner_radius(6);
+                .fill(settings_theme::ACCENT)
+                .corner_radius(7);
                 if ui.add(save).clicked() {
-                    self.preferences.storage.directory = PathBuf::from(&self.directory);
-                    self.status = match self.preferences.save(&self.config_path) {
-                        Ok(()) => {
-                            self.config = self.preferences.clone();
-                            "Saved. Shortcut changes apply when Settings closes.".into()
-                        }
-                        Err(error) => format!("Settings not saved: {error:#}"),
-                    };
-                    if let Some(capture) = self.source.take() {
-                        self.prepare(ui.ctx(), capture);
-                    }
-                }
-                if self.draft.is_some() && ui.button("Back to capture").clicked() {
-                    self.page = Page::Popup;
-                    self.place(ui.ctx());
-                    self.focus = true;
+                    self.save_settings(ui.ctx());
                 }
             });
         });
+    }
+    fn settings_general(&mut self, ui: &mut egui::Ui) {
+        settings_section(ui, "Capture");
+        settings_card(ui, |ui| {
+            settings_row(
+                ui,
+                "Capture shortcut",
+                "Start a capture, or save and close the open one.",
+                188.,
+                |ui| {
+                    ui.add_sized(
+                        [188., 32.],
+                        egui::TextEdit::singleline(&mut self.preferences.capture.hotkey)
+                            .hint_text("Command+B")
+                            .margin(egui::vec2(10., 8.)),
+                    );
+                },
+            );
+            settings_divider(ui);
+            settings_row(
+                ui,
+                "Screenshot folder",
+                "Images, notes, and metadata are saved together here.",
+                260.,
+                |ui| {
+                    ui.add_sized(
+                        [260., 32.],
+                        egui::TextEdit::singleline(&mut self.directory).margin(egui::vec2(10., 8.)),
+                    );
+                },
+            );
+        });
+        ui.add_space(10.);
+        settings_hint(ui, "Changes are written to config.toml when you save.");
+    }
+    fn settings_appearance(&mut self, ui: &mut egui::Ui) {
+        let mut annotation =
+            theme::parse_color(&self.preferences.ui.annotation_color).unwrap_or(theme::DEFAULT_BOX);
+        let mut message =
+            theme::parse_color(&self.preferences.ui.message_color).unwrap_or(theme::DEFAULT_BOX);
+        settings_section(ui, "Box colors");
+        settings_card(ui, |ui| {
+            settings_row(
+                ui,
+                "Annotation toolbar",
+                "Background of the drawing tools.",
+                204.,
+                |ui| settings_color_control(ui, &mut annotation),
+            );
+            settings_divider(ui);
+            settings_row(
+                ui,
+                "Message box",
+                "Background of the context field.",
+                204.,
+                |ui| settings_color_control(ui, &mut message),
+            );
+        });
+        let annotation = theme::color_hex(annotation);
+        if annotation != self.preferences.ui.annotation_color {
+            self.preferences.ui.annotation_color = annotation;
+        }
+        let message = theme::color_hex(message);
+        if message != self.preferences.ui.message_color {
+            self.preferences.ui.message_color = message;
+        }
+        ui.add_space(10.);
+        settings_hint(
+            ui,
+            "Borders, buttons, and hint text adjust automatically to keep every color readable.",
+        );
+    }
+    fn settings_privacy(&mut self, ui: &mut egui::Ui) {
+        settings_section(ui, "Permissions");
+        settings_card(ui, |ui| {
+            settings_row(
+                ui,
+                "Screen Recording",
+                "Lets SnapNote capture the part of the screen you select.",
+                132.,
+                |ui| {
+                    let enabled = self.draft.is_none() && self.source.is_none() && !self.loading;
+                    if ui
+                        .add_enabled(enabled, egui::Button::new("Allow access"))
+                        .clicked()
+                    {
+                        self.exit_code.store(11, Ordering::SeqCst);
+                        self.close(ui.ctx());
+                    }
+                },
+            );
+            settings_divider(ui);
+            settings_row_labels(
+                ui,
+                "Where to grant it",
+                "System Settings → Privacy & Security → Screen & System Audio Recording. Relaunch if macOS asks.",
+            );
+            settings_divider(ui);
+            settings_row_labels(
+                ui,
+                "Which app",
+                "Grant access to SnapNote, not the SnapNote Editor helper.",
+            );
+        });
+    }
+    fn save_settings(&mut self, ctx: &egui::Context) {
+        self.preferences.storage.directory = PathBuf::from(&self.directory);
+        self.status = match self.preferences.save(&self.config_path) {
+            Ok(()) => {
+                self.config = self.preferences.clone();
+                self.sync_box_colors();
+                "Saved. Shortcut changes apply when Settings closes.".into()
+            }
+            Err(error) => format!("Settings not saved: {error:#}"),
+        };
+        if let Some(capture) = self.source.take() {
+            self.prepare(ctx, capture);
+        }
     }
 }
 impl eframe::App for Popup {
@@ -591,6 +1028,14 @@ impl eframe::App for Popup {
         [0., 0., 0., 0.]
     }
     fn logic(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        if self.themed != Some(self.page) {
+            self.themed = Some(self.page);
+            ctx.set_visuals(if self.page == Page::Popup {
+                theme::visuals()
+            } else {
+                egui::Visuals::dark()
+            });
+        }
         // Closing is terminal: queued IPC/worker completions must never show us again.
         if self.quitting {
             return;
@@ -709,12 +1154,7 @@ impl eframe::App for Popup {
                         }
                     }
                 }
-                Event::Settings => {
-                    self.page = Page::Settings;
-                    self.preferences = self.config.clone();
-                    self.directory = self.config.storage.directory.to_string_lossy().into_owned();
-                    self.show_settings(ctx);
-                }
+                Event::Settings => self.open_settings(ctx),
                 Event::Recent => {
                     self.page = Page::Recent;
                     self.show(ctx);
@@ -786,7 +1226,7 @@ impl eframe::App for Popup {
         let panel_frame = if self.page == Page::Popup {
             egui::Frame::NONE
         } else if self.page == Page::Settings {
-            egui::Frame::new().fill(egui::Color32::from_rgb(18, 19, 20))
+            egui::Frame::new().fill(settings_theme::BODY)
         } else {
             egui::Frame::new().fill(egui::Color32::from_rgb(30, 32, 38))
         };
@@ -814,11 +1254,24 @@ impl eframe::App for Popup {
                     ui.scope(|ui| {
                         let preview_height = self.preview_ui(ui);
                         ui.add_space(6.);
-                        let bubble = egui::Frame::new()
-                            .fill(egui::Color32::from_rgb(30, 32, 38))
-                            .corner_radius(12)
-                            .inner_margin(10)
+                        let message_fill = self.message_color;
+                        let message_box = egui::Frame::new()
+                            .fill(message_fill)
+                            .stroke(egui::Stroke::new(1., theme::box_border(message_fill)))
+                            .corner_radius(8)
+                            .inner_margin(egui::Margin::symmetric(9, 8))
+                            .shadow(egui::epaint::Shadow {
+                                offset: [0, 2],
+                                blur: 8,
+                                spread: 0,
+                                color: egui::Color32::from_black_alpha(110),
+                            })
                             .show(ui, |ui| {
+                                let visuals = ui.visuals_mut();
+                                visuals.override_text_color = Some(theme::TEXT);
+                                visuals.weak_text_color = Some(theme::box_hint(message_fill));
+                                visuals.selection.bg_fill = theme::button_hover(message_fill);
+                                visuals.selection.stroke = egui::Stroke::new(1., theme::TEXT);
                                 egui::ScrollArea::vertical()
                                     .id_salt("message_scroll")
                                     .max_height(144.)
@@ -828,6 +1281,7 @@ impl eframe::App for Popup {
                                                 egui::TextEdit::multiline(&mut self.message)
                                                     .id_salt("message")
                                                     .frame(egui::Frame::NONE)
+                                                    .text_color(theme::TEXT)
                                                     .desired_width(f32::INFINITY)
                                                     .desired_rows(1)
                                                     .cursor_at_end(true)
@@ -848,25 +1302,32 @@ impl eframe::App for Popup {
                                             }
                                         });
                                     });
-                                ui.add_space(4.);
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(ui.available_width(), 24.),
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.add_enabled_ui(
-                                            !self.loading && !self.saving && !self.copying,
-                                            |ui| {
-                                                discard_message = popup_action(ui, false).clicked();
-                                                finish_message |= popup_action(ui, true).clicked();
-                                            },
-                                        );
-                                    },
-                                );
                                 if !self.status.is_empty() {
+                                    ui.add_space(4.);
                                     ui.small(&self.status);
                                 }
                             });
-                        let height = preview_height + 6. + bubble.response.rect.height() + 24.;
+                        // Actions float below the message area rather than living inside it.
+                        ui.add_space(6.);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), 30.),
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                ui.add_enabled_ui(
+                                    !self.loading && !self.saving && !self.copying,
+                                    |ui| {
+                                        discard_message = popup_action(ui, false).clicked();
+                                        finish_message |= popup_action(ui, true).clicked();
+                                    },
+                                );
+                            },
+                        );
+                        let height = preview_height
+                            + 6.
+                            + message_box.response.rect.height()
+                            + 6.
+                            + 30.
+                            + 24.;
                         if (height - self.popup_height).abs() > 1. {
                             self.popup_height = height;
                             let width = popup_geometry(self.anchor, self.preview_size).0.x;
@@ -886,11 +1347,7 @@ impl eframe::App for Popup {
                         }
                     });
                 }
-                Page::Settings => {
-                    egui::Frame::new()
-                        .inner_margin(28)
-                        .show(ui, |ui| self.settings_ui(ui));
-                }
+                Page::Settings => self.settings_ui(ui),
                 Page::Recent => {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         ui.heading("Recent snapshots");
@@ -940,16 +1397,337 @@ impl eframe::App for Popup {
         }
     }
 }
-fn settings_card(border: egui::Color32) -> egui::Frame {
-    egui::Frame::new()
-        .fill(egui::Color32::from_rgb(25, 27, 29))
-        .stroke(egui::Stroke::new(1., border))
-        .corner_radius(10)
-        .inner_margin(16)
+fn settings_titlebar(ui: &mut egui::Ui) -> WindowAction {
+    let ctx = ui.ctx().clone();
+    let area = ui.max_rect();
+    let first = area.min + egui::vec2(20., 22.);
+    let lights = [
+        (
+            egui::Rect::from_center_size(first, egui::vec2(12., 12.)),
+            egui::Color32::from_rgb(255, 95, 87),
+        ),
+        (
+            egui::Rect::from_center_size(first + egui::vec2(20., 0.), egui::vec2(12., 12.)),
+            egui::Color32::from_rgb(254, 188, 46),
+        ),
+        (
+            egui::Rect::from_center_size(first + egui::vec2(40., 0.), egui::vec2(12., 12.)),
+            egui::Color32::from_rgb(40, 200, 64),
+        ),
+    ];
+    let title = egui::Rect::from_min_size(area.min, egui::vec2(area.width(), 44.));
+    if ctx.input(|input| input.pointer.primary_pressed())
+        && let Some(pos) = ctx.input(|input| input.pointer.interact_pos())
+        && title.contains(pos)
+        && !lights.iter().any(|(rect, _)| rect.expand(3.).contains(pos))
+    {
+        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+    let mut action = WindowAction::None;
+    for (index, (rect, color)) in lights.into_iter().enumerate() {
+        let response = ui.interact(
+            rect.expand(2.),
+            ui.make_persistent_id(("settings_window_light", index)),
+            egui::Sense::click(),
+        );
+        ui.painter().circle_filled(rect.center(), 6., color);
+        if response.hovered() {
+            let ink = egui::Color32::from_rgb(74, 56, 20);
+            let center = rect.center();
+            let stroke = egui::Stroke::new(1.3, ink);
+            match index {
+                0 => {
+                    ui.painter().line_segment(
+                        [
+                            center + egui::vec2(-2.2, -2.2),
+                            center + egui::vec2(2.2, 2.2),
+                        ],
+                        stroke,
+                    );
+                    ui.painter().line_segment(
+                        [
+                            center + egui::vec2(2.2, -2.2),
+                            center + egui::vec2(-2.2, 2.2),
+                        ],
+                        stroke,
+                    );
+                }
+                1 => {
+                    ui.painter().line_segment(
+                        [center + egui::vec2(-2.4, 0.), center + egui::vec2(2.4, 0.)],
+                        stroke,
+                    );
+                }
+                _ => {
+                    ui.painter().line_segment(
+                        [center + egui::vec2(-2.4, 0.), center + egui::vec2(2.4, 0.)],
+                        stroke,
+                    );
+                    ui.painter().line_segment(
+                        [center + egui::vec2(0., -2.4), center + egui::vec2(0., 2.4)],
+                        stroke,
+                    );
+                }
+            }
+        }
+        if response.clicked() {
+            action = match index {
+                0 => WindowAction::Close,
+                1 => WindowAction::Minimize,
+                _ => WindowAction::Zoom,
+            };
+        }
+        let _ = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    }
+    action
 }
-fn settings_label(ui: &mut egui::Ui, title: &str, description: &str, muted: egui::Color32) {
-    ui.label(egui::RichText::new(title).size(13.).strong());
-    ui.label(egui::RichText::new(description).size(11.).color(muted));
+
+fn settings_sidebar(ui: &mut egui::Ui, selected: &mut SettingsTab) {
+    egui::Frame::new()
+        .fill(settings_theme::SIDEBAR)
+        .inner_margin(egui::Margin {
+            left: 12,
+            right: 12,
+            top: 46,
+            bottom: 14,
+        })
+        .show(ui, |ui| {
+            ui.set_width(settings_theme::SIDEBAR_WIDTH - 24.);
+            ui.set_min_height(ui.available_height());
+            ui.vertical(|ui| {
+                for tab in SettingsTab::ALL {
+                    if settings_nav_item(ui, *selected == tab, tab).clicked() {
+                        *selected = tab;
+                    }
+                    ui.add_space(2.);
+                }
+                let remaining = ui.available_height() - 20.;
+                if remaining > 0. {
+                    ui.add_space(remaining);
+                }
+                ui.label(
+                    egui::RichText::new(concat!("Version ", env!("CARGO_PKG_VERSION")))
+                        .size(10.5)
+                        .color(settings_theme::FAINT),
+                );
+            });
+        });
+}
+
+fn settings_nav_item(ui: &mut egui::Ui, selected: bool, tab: SettingsTab) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 36.), egui::Sense::click());
+    if selected || response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            8,
+            if selected {
+                settings_theme::SELECTED
+            } else {
+                settings_theme::HOVER
+            },
+        );
+    }
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 18., rect.center().y),
+        egui::vec2(16., 16.),
+    );
+    let color = if selected {
+        settings_theme::TEXT
+    } else {
+        settings_theme::MUTED
+    };
+    paint_nav_icon(ui.painter(), icon_rect, color, tab.icon());
+    ui.painter().text(
+        egui::pos2(rect.left() + 36., rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        tab.label(),
+        egui::FontId::proportional(13.5),
+        color,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn paint_nav_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32, icon: NavIcon) {
+    let center = rect.center();
+    match icon {
+        NavIcon::Sliders => {
+            let rows = [rect.top() + 3.5, rect.center().y, rect.bottom() - 3.5];
+            for (index, y) in rows.into_iter().enumerate() {
+                painter.line_segment(
+                    [
+                        egui::pos2(rect.left() + 1., y),
+                        egui::pos2(rect.right() - 1., y),
+                    ],
+                    egui::Stroke::new(1.2, color),
+                );
+                let x = rect.left() + 4. + index as f32 * 3.5;
+                painter.circle_filled(egui::pos2(x, y), 1.9, color);
+            }
+        }
+        NavIcon::Palette => {
+            painter.circle_stroke(center, 6.5, egui::Stroke::new(1.2, color));
+            for (dx, dy) in [(-2.5, -1.5), (2., -2.), (2.5, 1.5), (-1., 2.)] {
+                painter.circle_filled(center + egui::vec2(dx, dy), 1.25, color);
+            }
+        }
+        NavIcon::Shield => {
+            painter.add(egui::Shape::line(
+                vec![
+                    egui::pos2(center.x, rect.top() + 1.),
+                    egui::pos2(rect.right() - 2., rect.top() + 4.5),
+                    egui::pos2(rect.right() - 3., rect.center().y + 4.),
+                    egui::pos2(center.x, rect.bottom() - 1.),
+                    egui::pos2(rect.left() + 3., rect.center().y + 4.),
+                    egui::pos2(rect.left() + 2., rect.top() + 4.5),
+                    egui::pos2(center.x, rect.top() + 1.),
+                ],
+                egui::Stroke::new(1.2, color),
+            ));
+            painter.add(egui::Shape::line(
+                vec![
+                    center + egui::vec2(-3., 0.),
+                    center + egui::vec2(-0.8, 2.4),
+                    center + egui::vec2(3.4, -2.4),
+                ],
+                egui::Stroke::new(1.3, color),
+            ));
+        }
+    }
+}
+
+fn settings_gear_button(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(28., 28.), egui::Sense::click());
+    let visuals = ui.style().interact(&response);
+    ui.painter().rect(
+        rect,
+        6,
+        visuals.weak_bg_fill,
+        visuals.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+    let center = rect.center();
+    let color = visuals.fg_stroke.color;
+    for tooth in 0..8 {
+        let angle = std::f32::consts::TAU * tooth as f32 / 8.;
+        let direction = egui::vec2(angle.cos(), angle.sin());
+        ui.painter().line_segment(
+            [center + direction * 5.1, center + direction * 7.3],
+            egui::Stroke::new(2.1, color),
+        );
+    }
+    ui.painter()
+        .circle_stroke(center, 4.6, egui::Stroke::new(2.0, color));
+    ui.painter()
+        .circle_filled(center, 1.8, visuals.weak_bg_fill);
+    response.on_hover_text("Settings")
+}
+
+fn settings_section(ui: &mut egui::Ui, title: &str) {
+    ui.label(
+        egui::RichText::new(title.to_uppercase())
+            .size(10.5)
+            .color(settings_theme::MUTED),
+    );
+    ui.add_space(6.);
+}
+
+fn settings_card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::new()
+        .fill(settings_theme::CARD)
+        .stroke(egui::Stroke::new(1., settings_theme::BORDER))
+        .corner_radius(10)
+        .inner_margin(egui::Margin::symmetric(16, 14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            add(ui)
+        })
+        .inner
+}
+
+fn settings_row_labels(ui: &mut egui::Ui, title: &str, description: &str) {
+    ui.label(egui::RichText::new(title).size(14.).strong());
+    ui.add_space(2.);
+    ui.label(
+        egui::RichText::new(description)
+            .size(12.)
+            .color(settings_theme::MUTED),
+    );
+}
+
+fn settings_row<R>(
+    ui: &mut egui::Ui,
+    title: &str,
+    description: &str,
+    control_width: f32,
+    add_control: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let available = ui.available_width();
+    if available < 400. || available < control_width + 180. {
+        settings_row_labels(ui, title, description);
+        ui.add_space(8.);
+        return add_control(ui);
+    }
+    let spacing = ui.spacing().item_spacing.x;
+    let label_width = (available - control_width - spacing).max(140.);
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(label_width, 0.),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_width(label_width);
+                ui.set_max_width(label_width);
+                settings_row_labels(ui, title, description);
+            },
+        );
+        ui.allocate_ui_with_layout(
+            egui::vec2(control_width, 0.),
+            egui::Layout::right_to_left(egui::Align::Center),
+            add_control,
+        )
+        .inner
+    })
+    .inner
+}
+
+fn settings_divider(ui: &mut egui::Ui) {
+    ui.add_space(4.);
+    ui.separator();
+    ui.add_space(2.);
+}
+
+fn settings_hint(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        egui::RichText::new(text)
+            .size(11.5)
+            .color(settings_theme::FAINT),
+    );
+}
+
+fn settings_color_control(ui: &mut egui::Ui, current: &mut egui::Color32) {
+    ui.vertical(|ui| {
+        ui.set_min_width(196.);
+        ui.label(
+            egui::RichText::new("Vibrant")
+                .size(10.)
+                .color(settings_theme::FAINT),
+        );
+        theme::color_swatches(ui, current, &theme::VIBRANT);
+        ui.add_space(3.);
+        ui.label(
+            egui::RichText::new("Standard")
+                .size(10.)
+                .color(settings_theme::FAINT),
+        );
+        theme::color_swatches(ui, current, &theme::STANDARD);
+        ui.add_space(4.);
+        let name = theme::color_name(*current).unwrap_or("Custom");
+        ui.label(
+            egui::RichText::new(format!("{name} · {}", theme::color_hex(*current)))
+                .size(10.5)
+                .color(settings_theme::MUTED),
+        );
+    });
 }
 
 // Use the press position directly: native window dragging must start on the press
@@ -1021,14 +1799,14 @@ fn popup_action(ui: &mut egui::Ui, save: bool) -> egui::Response {
     } else {
         "Close and delete capture"
     };
-    let response = ui.add(egui::Button::new("").min_size(egui::vec2(26., 24.)));
+    let color = if save { theme::SUCCESS } else { theme::DANGER };
+    let response = ui.add(
+        egui::Button::new("")
+            .min_size(egui::vec2(32., 28.))
+            .stroke(egui::Stroke::new(1., color)),
+    );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
     let origin = response.rect.center() - egui::vec2(6., 6.);
-    let color = if save {
-        egui::Color32::from_rgb(95, 220, 135)
-    } else {
-        egui::Color32::from_rgb(245, 95, 95)
-    };
     let stroke = egui::Stroke::new(1.7, color);
     if save {
         ui.painter().add(egui::Shape::line(
@@ -1151,5 +1929,106 @@ mod tests {
             assert!(pos.x >= 8. && pos.y >= 8.);
             assert!(pos.x + size.x <= 1440. && pos.y + size.y <= 900.);
         }
+    }
+
+    #[test]
+    fn popup_theme_keeps_annotation_and_text_boxes_readable() {
+        fn assert_contrast(label: &str, fg: egui::Color32, bg: egui::Color32, floor: f32) {
+            let ratio = theme::contrast_ratio(fg, bg);
+            assert!(
+                ratio >= floor,
+                "{label} contrast {ratio:.2}:1 is below the {floor:.1}:1 floor"
+            );
+        }
+
+        let visuals = theme::visuals();
+        let text = visuals.text_color();
+        // Every selectable box color must keep its text and controls legible.
+        for (name, fill) in theme::VIBRANT.into_iter().chain(theme::STANDARD) {
+            assert_contrast(&format!("{name} message text"), text, fill, 4.5);
+            assert_contrast(
+                &format!("{name} hint text"),
+                theme::box_hint(fill),
+                fill,
+                4.5,
+            );
+            assert_contrast(
+                &format!("{name} box border"),
+                theme::box_border(fill),
+                fill,
+                3.0,
+            );
+            for (state, button) in [
+                ("inactive", theme::button_fill(fill)),
+                ("hovered", theme::button_hover(fill)),
+                ("active", theme::button_active(fill)),
+            ] {
+                assert_contrast(&format!("{name} {state} button text"), text, button, 4.5);
+                assert_contrast(
+                    &format!("{name} {state} button border"),
+                    theme::box_border(fill),
+                    button,
+                    3.0,
+                );
+            }
+            assert_contrast(
+                &format!("{name} selected tool"),
+                text,
+                theme::button_hover(fill),
+                4.5,
+            );
+        }
+        assert_contrast("default box text", text, theme::DEFAULT_BOX, 4.5);
+        // Uncolored surfaces still need readable text and borders.
+        assert_contrast("panel text", text, theme::PANEL, 4.5);
+        assert_contrast("panel border", theme::BORDER, theme::PANEL, 3.0);
+        assert_contrast("save icon", theme::SUCCESS, theme::BUTTON_BG, 3.0);
+        assert_contrast("delete icon", theme::DANGER, theme::BUTTON_BG, 3.0);
+    }
+
+    #[test]
+    fn box_colors_round_trip_through_hex() {
+        for (name, color) in theme::VIBRANT.into_iter().chain(theme::STANDARD) {
+            let hex = theme::color_hex(color);
+            assert_eq!(
+                theme::parse_color(&hex),
+                Some(color),
+                "{name} did not round-trip through {hex}"
+            );
+        }
+        assert_eq!(theme::parse_color("#3d4fd8"), Some(theme::DEFAULT_BOX));
+        assert_eq!(theme::parse_color("nonsense"), None);
+        assert_eq!(
+            theme::color_hex(theme::DEFAULT_BOX),
+            config::DEFAULT_BOX_COLOR
+        );
+    }
+
+    #[test]
+    fn toolbar_controls_fit_the_minimum_popup_width() {
+        // popup_geometry keeps the popup at least 340 points wide; the toolbar
+        // frame reserves 4 points of inner margin on each side.
+        let available = 340. - 8.;
+        let ctx = egui::Context::default();
+        let mut used = 0.0;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.set_width(available);
+            ui.set_visuals(theme::visuals());
+            ui.spacing_mut().item_spacing.x = 4.;
+            ui.spacing_mut().button_padding = egui::vec2(7., 3.);
+            let left = ui.cursor().left();
+            for label in ["Move", "Pen", "Arrow", "Box"] {
+                used = ui.selectable_label(false, label).rect.right() - left;
+            }
+            for label in ["Undo", "Redo"] {
+                used = ui.button(label).rect.right() - left;
+            }
+            used = settings_gear_button(ui).rect.right() - left;
+        });
+        output.textures_delta.clear();
+        assert!(
+            used <= available,
+            "toolbar controls need {used:.0} points but only {available:.0} are available"
+        );
     }
 }
